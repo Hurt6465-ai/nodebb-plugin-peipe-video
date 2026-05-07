@@ -419,7 +419,7 @@ plugin.addRoutes = async function addRoutes({ router, middleware, helpers }) {
     helpers.formatApiResponse(200, res, { ok: true });
   });
 
-  routeHelpers.setupApiRoute(router, 'delete', '/peipe-video/topics/:tid', [middleware.authenticate], async (req, res) => {
+  routeHelpers.setupApiRoute(router, 'delete', '/peipe-video/topics/:tid', [], async (req, res) => {
     try {
       const uid = getReqUid(req);
       const tid = String(req.params.tid || '');
