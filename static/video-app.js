@@ -1,30 +1,26 @@
-/* Peipe /video mobile discover page v8.2 playback fixed
+/* Peipe /video mobile discover page v8.3 playback hotfix
    - Independent /video page, official NodeBB plugin backend feed only
-   - Fixes iframe being blanked after leaving a slide and then never recreated
-   - Starts safely muted when no user gesture exists, then unlocks sound on touch/click
-   - Supports native mp4/webm/m3u8 URLs when the feed provides them, inspired by the first Vue <video> implementation
-   - Keeps only nearby players warm for smoother vertical swipe and lower memory use
+   - Swiper vertical feed with virtual slides
+   - TikTok official embed keeps official audio controls; no custom center play button
+   - Image posts use horizontal carousel; video posts use vertical feed
    - Comment drawer, replies, translate for text/comments/input
-   - Voice comments: explicit stop/send, 120s max
 */
 (function () {
   'use strict';
 
-  if (window.__peipeVideoDiscoverV82) return;
-  window.__peipeVideoDiscoverV82 = true;
+  if (window.__peipeVideoDiscoverV83) return;
+  window.__peipeVideoDiscoverV83 = true;
   window.__peipeVideoDiscoverV8 = true;
-  window.__peipeVideoDiscoverV81 = true;
 
   var CONFIG = Object.assign({
     cid: 6,
     pageSize: 12,
-    preloadAhead: 8,
-    preloadVideoAhead: 3,
+    preloadAhead: 14,
+    preloadVideoAhead: 5,
     imageMax: 4,
     coverCacheMs: 7 * 24 * 60 * 60 * 1000,
     translateCacheMs: 3 * 24 * 60 * 60 * 1000,
     doubleTapMs: 280,
-    maxVoiceSeconds: 120,
     swiperCdnJs: '/plugins/nodebb-plugin-peipe-video/static/lib/swiper-bundle.min.js',
     swiperCdnCss: '/plugins/nodebb-plugin-peipe-video/static/lib/swiper-bundle.min.css'
   }, window.PEIPE_VIDEO_CONFIG || {});
@@ -49,7 +45,7 @@
     commentPlaceholder: '发送消息...',
     replyTo: '回复',
     cancelReply: '取消回复',
-    commentFail: '评论失败，请稍后再试',
+    commentFail: '评论失败，可打开原帖评论',
     openTopic: '打开原帖',
     loginFirst: '请先登录',
     followFail: '关注失败',
@@ -77,8 +73,6 @@
     aiPrompt: '提示词',
     voicePreview: '语音评论',
     recording: '录音中',
-    recordingTip: '正在录音，最多 120 秒',
-    stopRecording: '结束录音',
     manage: '管理',
     deleteVideo: '删除视频',
     deleteConfirm: '确定删除这条视频动态？',
@@ -106,16 +100,12 @@
     feedDone: false,
     index: 0,
     players: new Map(),
-    nativePlayers: new Map(),
     imageIndex: new Map(),
     hasInteracted: false,
     lastTap: { time: 0, x: 0, y: 0, timer: 0 },
     compose: {
       imageFiles: [],
       imageUrls: [],
-      voiceBlob: null,
-      voiceUrl: '',
-      voiceDuration: 0,
       mediaRecorder: null,
       stream: null,
       chunks: [],
@@ -124,26 +114,8 @@
     },
     viewer: { images: [], index: 0, swiper: null, startX: 0, startY: 0, down: false },
     imageSwipers: new Map(),
-    soundUnlocked: safeJsonGet('pv-sound-unlocked', false) === true,
-    comments: {
-      item: null,
-      posts: [],
-      loading: false,
-      replyTo: null,
-      dragY: 0,
-      dragStartY: 0,
-      dragging: false,
-      dragCandidate: false,
-      dragStartTopZone: false,
-      voiceBlob: null,
-      voiceUrl: '',
-      voiceDuration: 0,
-      mediaRecorder: null,
-      stream: null,
-      chunks: [],
-      startAt: 0,
-      timer: 0
-    },
+    soundUnlocked: false,
+    comments: { item: null, posts: [], loading: false, replyTo: null, dragY: 0, dragStartY: 0, dragging: false, dragCandidate: false, dragStartTopZone: false, voiceBlob: null, voiceUrl: '', voiceDuration: 0, mediaRecorder: null, stream: null, chunks: [], startAt: 0, timer: 0 },
     translateLongPressTimer: 0,
     manageItem: null
   };
@@ -215,34 +187,6 @@
     });
   }
 
-  function injectRuntimeStyles() {
-    var oldStyle = document.getElementById('pv-video-v81-runtime-style');
-    if (oldStyle) oldStyle.remove();
-    if (document.getElementById('pv-video-v82-runtime-style')) return;
-    var style = document.createElement('style');
-    style.id = 'pv-video-v82-runtime-style';
-    style.textContent = [
-      '#peipe-video-app .pv-swiper,#peipe-video-app .pv-slide-item,#peipe-video-app .pv-media{touch-action:pan-y!important;will-change:transform;}',
-      '#peipe-video-app .pv-video-shell,#peipe-video-app .pv-native-video-shell{position:absolute!important;inset:0!important;background:#000!important;overflow:hidden!important;}',
-      '#peipe-video-app .pv-tiktok-frame,#peipe-video-app .pv-native-video{width:100%!important;height:100%!important;border:0!important;display:block!important;background:#000!important;object-fit:contain!important;}',
-      '#peipe-video-app .pv-native-video{transform:translateZ(0);}',
-      '#peipe-video-app .pv-cover{position:absolute!important;inset:0!important;z-index:3!important;background:#000!important;transition:opacity .22s ease,visibility .22s ease!important;pointer-events:none!important;}',
-      '#peipe-video-app .pv-cover img{width:100%!important;height:100%!important;object-fit:cover!important;filter:blur(14px)!important;transform:scale(1.04)!important;opacity:.82!important;}',
-      '#peipe-video-app .pv-cover.is-hidden{opacity:0!important;visibility:hidden!important;}',
-      '#peipe-video-app .pv-slide-item.is-loading .pv-video-shell:after,#peipe-video-app .pv-slide-item.is-loading .pv-native-video-shell:after{content:"";position:absolute;left:50%;top:50%;width:28px;height:28px;margin:-14px 0 0 -14px;border-radius:50%;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;animation:pvSpin .8s linear infinite;z-index:8;pointer-events:none;}',
-      '@keyframes pvSpin{to{transform:rotate(360deg)}}',
-      '#peipe-video-app .pv-tap-zone{position:absolute!important;left:0!important;right:82px!important;top:0!important;bottom:150px!important;z-index:4!important;touch-action:pan-y!important;pointer-events:auto!important;}',
-      '#peipe-video-app .pv-toolbar,#peipe-video-app .pv-desc{position:absolute;z-index:22!important;pointer-events:auto!important;touch-action:pan-y!important;}',
-      '#peipe-video-app .pv-text-row,#peipe-video-app .pv-translate-btn,#peipe-video-app .pv-comment-translate,#peipe-video-app .pv-comment-input-translate{position:relative;z-index:28!important;pointer-events:auto!important;}',
-      '#peipe-video-app .pv-desc{left:12px;right:86px;}',
-      '#peipe-video-app .pv-comment-record-stop{border:0;border-radius:999px;padding:8px 14px;background:#fff;color:#111;font-weight:700;}',
-      '#peipe-video-app .pv-comment-voice-send{border:0;border-radius:999px;padding:8px 14px;background:#fe2c55;color:#fff;font-weight:700;margin-left:8px;}',
-      '#peipe-video-app .pv-comment-voice-remove{border:0;border-radius:999px;width:28px;height:28px;margin-left:6px;background:rgba(255,255,255,.18);color:#fff;font-size:20px;}',
-      '#peipe-video-app .pv-modal-backdrop.is-open,#peipe-video-app .pv-drawer-backdrop.is-open{cursor:pointer;}'
-    ].join('\n');
-    document.head.appendChild(style);
-  }
-
   function cleanDisplayText(text) {
     var lines = String(text || '')
       .replace(RE.tiktokGlobal, '')
@@ -259,7 +203,9 @@
     var clean = norm(String(text || '').replace(/[•・·|｜_／/\\-]+/g, ' '));
     return !clean || /^https?:\/\/(?:vt|vm|www\.)?tiktok\./i.test(clean) || /^(?:动态|新动态|图片分享|图片动态|语音消息|语音动态|voice message|audio message|image|photo|picture)(?:\s*:??\s*\d{1,2}:\d{2}(?::\d{2})?)?$/i.test(clean);
   }
-  function displayText(item) { return cleanDisplayText(item && (item.text || item.title || '')); }
+  function displayText(item) {
+    return cleanDisplayText(item && (item.text || item.title || ''));
+  }
   function isOwnAuthor(author) {
     var me = currentUser();
     if (!me || !author) return false;
@@ -270,57 +216,6 @@
   function canonicalTikTokUrl(url) {
     var m = String(url || '').replace(/&amp;/g, '&').match(RE.tiktokOne);
     return m ? 'https://www.tiktok.com/@' + m[1] + '/video/' + m[2] : String(url || '');
-  }
-
-
-  function pushVideoUrl(out, value) {
-    if (!value) return;
-    if (Array.isArray(value)) { value.forEach(function (v) { pushVideoUrl(out, v); }); return; }
-    if (typeof value === 'object') {
-      pushVideoUrl(out, value.url || value.src || value.href || value.playUrl || value.play_url || value.downloadUrl || value.download_url);
-      pushVideoUrl(out, value.url_list || value.urlList || value.urls || value.sources);
-      return;
-    }
-    var url = String(value || '').replace(/&amp;/g, '&').trim();
-    if (!/^https?:\/\//i.test(url) && url.charAt(0) !== '/') return;
-    if (/tiktok\.com\/@[^\/\s]+\/video\//i.test(url)) return;
-    if (!/\.(mp4|m4v|webm|mov|m3u8)(?:[?#].*)?$/i.test(url) && !/[?&](mime|type)=video/i.test(url) && !/\/video\//i.test(url)) return;
-    if (!out.some(function (x) { return x === url; })) out.push(url);
-  }
-  function nativeVideoSources(item) {
-    var out = [];
-    if (!item) return out;
-    pushVideoUrl(out, item.videoUrl || item.video_url || item.playUrl || item.play_url || item.src || item.url);
-    pushVideoUrl(out, item.videoUrls || item.video_urls || item.sources || item.media);
-    if (item.video) {
-      pushVideoUrl(out, item.video.url || item.video.src || item.video.playUrl || item.video.play_url);
-      pushVideoUrl(out, item.video.url_list || item.video.urlList || item.video.urls || item.video.sources);
-      if (item.video.play_addr) pushVideoUrl(out, item.video.play_addr.url_list || item.video.play_addr.urlList || item.video.play_addr.urls);
-      if (item.video.download_addr) pushVideoUrl(out, item.video.download_addr.url_list || item.video.download_addr.urlList || item.video.download_addr.urls);
-      if (item.video.cover) pushVideoUrl(out, item.video.cover.video_url || item.video.cover.url);
-    }
-    (item.tiktoks || []).forEach(function (tk) {
-      pushVideoUrl(out, tk.videoUrl || tk.video_url || tk.playUrl || tk.play_url || tk.downloadUrl || tk.download_url || tk.src);
-      pushVideoUrl(out, tk.sources || tk.url_list || tk.urlList);
-    });
-    return out;
-  }
-  function videoPoster(item) {
-    if (!item) return '';
-    var v = item.video || {};
-    var cover = v.poster || v.cover || item.poster || item.cover || item.thumbnail || item.thumb;
-    if (Array.isArray(cover)) return cover[0] || '';
-    if (cover && typeof cover === 'object') return (cover.url_list && cover.url_list[0]) || (cover.urlList && cover.urlList[0]) || cover.url || cover.src || '';
-    if (typeof cover === 'string') return cover;
-    if (item.images && item.images[0]) return item.images[0];
-    return '';
-  }
-  function videoMime(url) {
-    url = String(url || '').split('?')[0].toLowerCase();
-    if (/\.m3u8$/.test(url)) return 'application/vnd.apple.mpegurl';
-    if (/\.webm$/.test(url)) return 'video/webm';
-    if (/\.mov$/.test(url)) return 'video/quicktime';
-    return 'video/mp4';
   }
 
   function addPreconnects() {
@@ -364,16 +259,7 @@
     if (state.feedLoading || (state.feedDone && !refresh)) return Promise.resolve();
     state.feedLoading = true;
     if (refresh) {
-      state.feedPage = 1;
-      state.feedDone = false;
-      state.list = [];
-      state.index = 0;
-      state.players.forEach(function (p) { try { if (p.iframe) p.iframe.remove(); } catch (e) {} });
-      state.players.clear();
-      state.nativePlayers.forEach(function (p) { try { if (p.video) { p.video.pause(); p.video.removeAttribute('src'); p.video.load(); } } catch (e) {} });
-      state.nativePlayers.clear();
-      state.imageSwipers.forEach(function (sw) { try { sw.destroy(true, true); } catch (e) {} });
-      state.imageSwipers.clear();
+      state.feedPage = 1; state.feedDone = false; state.list = []; state.index = 0; state.players.clear();
       updateSwiperSlides(true);
     }
     var page = state.feedPage;
@@ -405,17 +291,13 @@
     state.swiper = new window.Swiper(el, {
       direction: 'vertical',
       slidesPerView: 1,
-      speed: 230,
-      threshold: 1,
-      touchRatio: 1.35,
+      speed: 300,
+      threshold: 0,
       touchStartPreventDefault: false,
-      touchStartForcePreventDefault: false,
       touchMoveStopPropagation: false,
       touchReleaseOnEdges: false,
-      touchEventsTarget: 'container',
-      resistanceRatio: 0.12,
-      longSwipesMs: 160,
-      longSwipesRatio: 0.045,
+      resistanceRatio: 0.22,
+      longSwipesRatio: 0.08,
       shortSwipes: true,
       touchAngle: 60,
       followFinger: true,
@@ -423,11 +305,10 @@
       preventClicks: false,
       preventClicksPropagation: false,
       passiveListeners: false,
-      noSwipingSelector: 'input, textarea, select, button, a, .pv-comments-panel, .pv-compose-panel, .pv-translate-panel, .pv-manage-panel, .pv-viewer, .pv-image-swiper, .pv-voice-card',
       virtual: {
         enabled: true,
-        addSlidesBefore: 2,
-        addSlidesAfter: Math.max(8, CONFIG.preloadAhead),
+        addSlidesBefore: 3,
+        addSlidesAfter: Math.max(18, CONFIG.preloadAhead + 6),
         slides: state.list.map(renderSlideHtml)
       },
       on: {
@@ -437,13 +318,10 @@
           activateCurrent(false);
           showComposeFabInitial();
         },
-        touchStart: function () {
-          state.hasInteracted = true;
-        },
         slideChangeTransitionStart: function (swiper) {
           state.hasInteracted = true;
           hideComposerFab();
-          pauseSlide(swiper.previousIndex, true);
+          pauseSlide(swiper.previousIndex);
         },
         slideChange: function (swiper) {
           state.index = swiper.activeIndex || 0;
@@ -473,7 +351,7 @@
     $$('.pv-slide-item', state.root).forEach(function (slide) {
       var index = Number(slide.dataset.index || -1);
       slide.classList.toggle('is-active', index === state.index);
-      if (Math.abs(index - state.index) <= 1) prepareSlide(index, false);
+      prepareSlide(index, false);
     });
     initImageSwipers();
     preloadNextVideos(state.index);
@@ -483,16 +361,11 @@
     item = item || {};
     var text = displayText(item);
     var hasText = !!text;
-    var nativeSources = nativeVideoSources(item);
-    var hasNativeVideo = nativeSources.length > 0;
-    var hasTikTokVideo = !!(item.tiktoks && item.tiktoks[0]);
-    var hasVideo = hasNativeVideo || hasTikTokVideo;
+    var hasVideo = !!(item.tiktoks && item.tiktoks[0]);
     var images = (item.images || []).slice(0, CONFIG.imageMax);
     var imageIndex = getImageIndex(item);
     var mediaHtml = '';
-    if (hasNativeVideo) {
-      mediaHtml = renderNativeVideo(item, index, nativeSources);
-    } else if (hasTikTokVideo) {
+    if (hasVideo) {
       mediaHtml = '<div class="pv-video-shell" data-video-id="' + escapeHtml(item.tiktoks[0].videoId) + '"></div>';
     } else if (images.length) {
       mediaHtml = renderImageMain(item, imageIndex);
@@ -505,6 +378,7 @@
     var avatarHtml = avatar ? '<img class="pv-avatar" src="' + escapeHtml(avatar) + '" alt="avatar">' : '<div class="pv-avatar"></div>';
     var following = readFollow(author) || item.viewer.following;
     var liked = !!(readVote(item.pid, item.tid) || item.viewer.liked);
+    var showImagePill = hasVideo && images.length;
 
     return '' +
       '<section class="pv-slide-item ' + (hasVideo ? 'is-video' : 'is-image') + '" data-index="' + index + '" data-tid="' + escapeHtml(item.tid || '') + '">' +
@@ -527,18 +401,6 @@
         '</div>' +
       '</section>';
   }
-  function renderNativeVideo(item, index, sources) {
-    var poster = videoPoster(item);
-    var sourceHtml = (sources || []).map(function (src) {
-      return '<source src="' + escapeHtml(src) + '" type="' + videoMime(src) + '">';
-    }).join('');
-    return '<div class="pv-native-video-shell" data-index="' + index + '">' +
-      '<video class="pv-native-video" data-index="' + index + '" ' +
-      (poster ? 'poster="' + escapeHtml(poster) + '" ' : '') +
-      'preload="metadata" muted loop playsinline webkit-playsinline x5-playsinline x5-video-player-type="h5-page" x5-video-player-fullscreen="false" disablepictureinpicture controlslist="nodownload noplaybackrate nofullscreen">' +
-      sourceHtml + '<p>您的浏览器不支持 video 标签。</p></video></div>';
-  }
-
   function iconHeart(active) { return '<svg class="pv-heart-svg" viewBox="0 0 48 48" aria-hidden="true"><path d="M24 41s-2.2-1.3-5.2-3.4C10.2 31.4 5 25.8 5 18.6 5 12.7 9.5 8 15.2 8c3.5 0 6.6 1.8 8.8 4.7C26.2 9.8 29.3 8 32.8 8 38.5 8 43 12.7 43 18.6c0 7.2-5.2 12.8-13.8 19C26.2 39.7 24 41 24 41z"></path></svg>'; }
   function iconComment() { return '<svg class="pv-comment-svg" viewBox="0 0 48 48" aria-hidden="true"><path d="M24 7.5c-9.8 0-17.5 6.8-17.5 15.2 0 5.4 3.2 10.2 8 12.9l-.8 5.2 6.1-3.4c1.4.3 2.8.4 4.2.4 9.8 0 17.5-6.8 17.5-15.1S33.8 7.5 24 7.5z"></path><circle cx="17.4" cy="23.3" r="2.1"></circle><circle cx="24" cy="23.3" r="2.1"></circle><circle cx="30.6" cy="23.3" r="2.1"></circle></svg>'; }
   function iconTranslate() { return '<i class="fa-solid fa-language" aria-hidden="true"></i>'; }
@@ -640,7 +502,7 @@
     iframe.className = 'pv-tiktok-frame';
     iframe.src = buildPlayerUrl(tk.videoId, !!autoplay, muted !== false);
     iframe.allow = 'autoplay; fullscreen; encrypted-media; picture-in-picture';
-    iframe.loading = index === state.index ? 'eager' : 'lazy';
+    iframe.loading = 'eager';
     iframe.fetchPriority = index === state.index ? 'high' : 'low';
     iframe.referrerPolicy = 'strict-origin-when-cross-origin';
     iframe.title = 'TikTok Player';
@@ -654,43 +516,24 @@
     });
     return player;
   }
-  function ensureNativePlayer(index) {
-    var slide = findSlide(index);
-    var item = state.list[index];
-    if (!slide || !item || !nativeVideoSources(item).length) return null;
-    var video = $('.pv-native-video', slide);
-    if (!video) return null;
-    var key = 'native:' + index;
-    var player = state.nativePlayers.get(key);
-    if (player && player.video === video && document.documentElement.contains(video)) return player;
-    player = { key: key, index: index, item: item, video: video, wantPlay: false, status: 'paused', entered: false };
-    video.playsInline = true;
-    video.setAttribute('playsinline', '');
-    video.setAttribute('webkit-playsinline', '');
-    video.preload = index === state.index ? 'auto' : 'metadata';
-    video.addEventListener('waiting', function () { var s = findSlide(index); if (s && player.wantPlay) s.classList.add('is-loading'); });
-    video.addEventListener('canplay', function () { var s = findSlide(index); if (s) s.classList.remove('is-loading'); });
-    video.addEventListener('playing', function () { player.status = 'playing'; markSlidePlaying(index); });
-    video.addEventListener('pause', function () { player.status = 'paused'; var s = findSlide(index); if (s) s.classList.remove('is-playing', 'is-loading'); });
-    video.addEventListener('error', function () { var s = findSlide(index); if (s) s.classList.remove('is-loading'); });
-    state.nativePlayers.set(key, player);
-    return player;
-  }
   function prepareSlide(index, autoplay) {
     if (index < 0 || index >= state.list.length) return;
     var item = state.list[index];
-    if (!item) return;
-    if (nativeVideoSources(item).length) { ensureNativePlayer(index); return; }
-    if (!(item.tiktoks && item.tiktoks[0])) return;
-    ensureTikTokPlayer(index, !!autoplay, true);
+    if (!item || !(item.tiktoks && item.tiktoks[0])) return;
+    var canSound = !!(autoplay && (state.hasInteracted || state.soundUnlocked) && index === state.index);
+    var player = ensureTikTokPlayer(index, !!autoplay, !canSound);
+    if (player && player.iframe && isBlankIframe(player.iframe)) {
+      state.players.delete(player.key);
+      ensureTikTokPlayer(index, !!autoplay, !canSound);
+    }
   }
   function preloadNextVideos(fromIndex) {
     var found = 0;
-    var maxScan = Math.min(state.list.length - 1, fromIndex + Math.max(4, CONFIG.preloadAhead));
-    for (var i = Math.max(0, fromIndex - 1); i <= maxScan && found < (CONFIG.preloadVideoAhead || 3); i += 1) {
+    var maxScan = Math.min(state.list.length - 1, fromIndex + Math.max(12, CONFIG.preloadAhead + 8));
+    for (var i = Math.max(0, fromIndex); i <= maxScan && found < (CONFIG.preloadVideoAhead || 5); i += 1) {
       var it = state.list[i];
-      if (it && (nativeVideoSources(it).length || (it.tiktoks && it.tiktoks[0]))) {
-        prepareSlide(i, false);
+      if (it && it.tiktoks && it.tiktoks[0]) {
+        prepareSlide(i, i === state.index && (state.hasInteracted || state.soundUnlocked));
         found += 1;
       }
     }
@@ -700,7 +543,7 @@
     $$('.pv-slide-item', state.root).forEach(function (slide) {
       var idx = Number(slide.dataset.index || -1);
       slide.classList.toggle('is-active', idx === state.index);
-      if (idx !== state.index) pauseSlide(idx, true);
+      if (idx !== state.index) pauseSlide(idx);
     });
     preloadNextVideos(state.index);
     playSlide(state.index, !!(state.hasInteracted || state.soundUnlocked));
@@ -718,48 +561,20 @@
     player.status = 'paused';
     sendToPlayer(player.iframe, 'pause');
     setTimeout(function () { sendToPlayer(player.iframe, 'pause'); }, 80);
-  }
-  function hardStopNative(player, reset) {
-    if (!player || !player.video) return;
-    player.wantPlay = false;
-    player.status = 'paused';
-    try { player.video.pause(); } catch (e) {}
-    if (reset) {
-      try { if (Number.isFinite(player.video.duration) && player.video.duration > 0) player.video.currentTime = 0; } catch (e) {}
-    }
-  }
-  function playNativeSlide(index, userGesture) {
-    var player = ensureNativePlayer(index);
-    if (!player || !player.video) return;
-    var video = player.video;
-    var slide = findSlide(index);
-    pauseOtherPlayers(player.key);
-    player.wantPlay = true;
-    video.preload = 'auto';
-    if (!player.entered) { try { video.currentTime = 0; } catch (e) {} player.entered = true; }
-    var canSound = !!(userGesture || (state.hasInteracted && state.soundUnlocked));
-    video.muted = !canSound;
-    if (canSound) { try { video.volume = 1; } catch (e) {} state.soundUnlocked = true; safeJsonSet('pv-sound-unlocked', true); }
-    if (slide) slide.classList.add('is-loading');
-    var ret;
-    try { ret = video.play(); } catch (e) { ret = Promise.reject(e); }
-    if (ret && ret.catch) {
-      ret.catch(function () {
-        video.muted = true;
-        state.soundUnlocked = false;
-        safeJsonSet('pv-sound-unlocked', false);
-        try { video.play().catch(function () {}); } catch (e) {}
-      });
-    }
+    setTimeout(function () { sendToPlayer(player.iframe, 'pause'); }, 260);
   }
   function playSlide(index, userGesture) {
     var item = state.list[index];
-    if (!item) { preloadNextVideos(index); return; }
-    if (nativeVideoSources(item).length) { playNativeSlide(index, userGesture); preloadNextVideos(index); return; }
-    if (!(item.tiktoks && item.tiktoks[0])) { preloadNextVideos(index); return; }
+    if (!item || !(item.tiktoks && item.tiktoks[0])) { preloadNextVideos(index); return; }
     var canSound = !!(userGesture || (state.hasInteracted && state.soundUnlocked));
     var player = ensureTikTokPlayer(index, true, !canSound);
     if (!player || !player.iframe) return;
+    if (canSound && player.muted) {
+      try { player.iframe.remove(); } catch (e) {}
+      state.players.delete(player.key);
+      player = ensureTikTokPlayer(index, true, false);
+      if (!player || !player.iframe) return;
+    }
     player.wantPlay = true;
     player.muted = !canSound;
     pauseOtherPlayers(player.key);
@@ -770,53 +585,35 @@
     sendToPlayer(player.iframe, soundCommand);
     sendToPlayer(player.iframe, 'play');
     setTimeout(function () { sendToPlayer(player.iframe, soundCommand); sendToPlayer(player.iframe, 'play'); }, 90);
-    setTimeout(function () { sendToPlayer(player.iframe, 'play'); sendToPlayer(player.iframe, soundCommand); }, 280);
-    setTimeout(function () { sendToPlayer(player.iframe, soundCommand); sendToPlayer(player.iframe, 'play'); }, 760);
-    setTimeout(function () { if (player.wantPlay && player.index === state.index) markSlidePlaying(index); }, 1300);
+    setTimeout(function () { sendToPlayer(player.iframe, 'play'); sendToPlayer(player.iframe, soundCommand); }, 300);
+    setTimeout(function () { sendToPlayer(player.iframe, soundCommand); sendToPlayer(player.iframe, 'play'); }, 780);
+    setTimeout(function () { if (player.wantPlay && player.index === state.index) markSlidePlaying(index); }, 1600);
     preloadNextVideos(index);
   }
-  function pauseSlide(index, resetNative) {
+  function pauseSlide(index) {
     state.players.forEach(function (p) {
       if (p.index !== index) return;
+      p.wantPlay = false; p.status = 'paused';
       hardStopPlayer(p);
-    });
-    state.nativePlayers.forEach(function (p) {
-      if (p.index !== index) return;
-      hardStopNative(p, resetNative !== false);
-      if (resetNative !== false) p.entered = false;
     });
     var slide = findSlide(index);
     if (slide) slide.classList.remove('is-playing', 'is-loading');
   }
-  function pauseOtherNativePlayers(currentKey) {
-    state.nativePlayers.forEach(function (p, key) {
-      if (key === currentKey) return;
-      hardStopNative(p, true);
-      p.entered = false;
-      var slide = findSlide(p.index);
-      if (slide) slide.classList.remove('is-playing', 'is-loading');
-    });
-  }
   function pauseOtherPlayers(currentKey) {
-    pauseOtherNativePlayers(currentKey);
     state.players.forEach(function (p, key) {
       if (key === currentKey) return;
-      hardStopPlayer(p);
+      p.wantPlay = false; p.status = 'paused';
+      if (p.iframe) hardStopPlayer(p);
       var slide = findSlide(p.index);
       if (slide) slide.classList.remove('is-playing', 'is-loading');
     });
   }
   function prunePlayers() {
-    var keep = Math.max(4, (CONFIG.preloadVideoAhead || 3) + 2);
+    var keep = CONFIG.preloadAhead + 2;
     state.players.forEach(function (p, key) {
-      if (Math.abs(p.index - state.index) <= keep && p.iframe && p.iframe.parentNode && !isBlankIframe(p.iframe)) return;
-      try { if (p.iframe) { sendToPlayer(p.iframe, 'pause'); p.iframe.remove(); } } catch (e) {}
+      if (Math.abs(p.index - state.index) <= keep) return;
+      try { if (p.iframe) { sendToPlayer(p.iframe, 'pause'); p.iframe.src = 'about:blank'; p.iframe.remove(); } } catch (e) {}
       state.players.delete(key);
-    });
-    state.nativePlayers.forEach(function (p, key) {
-      if (Math.abs(p.index - state.index) <= keep && p.video && document.documentElement.contains(p.video)) return;
-      hardStopNative(p, true);
-      state.nativePlayers.delete(key);
     });
   }
   function markSlidePlaying(index) {
@@ -827,7 +624,6 @@
     slide.classList.add('is-playing');
     slide.classList.remove('is-loading');
   }
-
   window.addEventListener('message', function (event) {
     var data = event.data;
     if (typeof data === 'string') { try { data = JSON.parse(data); } catch (e) { return; } }
@@ -850,7 +646,7 @@
       }
       if (data.type === 'onStateChange') {
         var value = Number(data.value); var word = String(data.value || '').toLowerCase();
-        if (value === 1 || word === 'playing') { player.status = 'playing'; if (state.hasInteracted && !player.muted) { state.soundUnlocked = true; safeJsonSet('pv-sound-unlocked', true); } pauseOtherPlayers(player.key); markSlidePlaying(player.index); }
+        if (value === 1 || word === 'playing') { player.status = 'playing'; state.soundUnlocked = true; safeJsonSet('pv-sound-unlocked', true); pauseOtherPlayers(player.key); markSlidePlaying(player.index); }
         else if (value === 2 || value === 0 || word === 'paused' || word === 'ended') { player.status = 'paused'; var s = findSlide(player.index); if (s) s.classList.remove('is-playing', 'is-loading'); }
         else if (value === 3 || word === 'buffering') { var s2 = findSlide(player.index); if (s2 && player.wantPlay) s2.classList.add('is-loading'); }
       }
@@ -880,8 +676,8 @@
     clearTimeout(last.timer);
     last.timer = setTimeout(function () {
       if (!(item.tiktoks && item.tiktoks[0])) return;
-      var player = Array.from(state.players.values()).find(function (p) { return p.index === index; }) || state.nativePlayers.get('native:' + index);
-      if (player && player.status === 'playing') pauseSlide(index, false);
+      var player = Array.from(state.players.values()).find(function (p) { return p.index === index; });
+      if (player && player.status === 'playing') pauseSlide(index);
       else { state.hasInteracted = true; playSlide(index, true); }
     }, CONFIG.doubleTapMs + 20);
   }
@@ -898,7 +694,7 @@
   function writeVote(pid, tid, voted) { var s = voteStore(); if (pid) s['pid:' + pid] = !!voted; if (tid) s['tid:' + tid] = !!voted; safeJsonSet(voteStoreKey(), s); }
   function toggleLike(item, slide, optimistic, point) {
     if (!isLoggedIn()) return alertError(TEXT.loginFirst);
-    if (!item || !item.pid) return alertError(TEXT.likeFail);
+    if (!item.pid) return alertError(TEXT.likeFail);
     var old = !!item.viewer.liked; var next = !old;
     item.viewer.liked = next; item.counts.likes = Math.max(0, Number(item.counts.likes || 0) + (next ? 1 : -1));
     writeVote(item.pid, item.tid, next); updateLikeUi(slide, item); if (point && next) showHeart(point.x, point.y);
@@ -1008,13 +804,12 @@
   }
   function openTranslateSettings() {
     var panel = $('.pv-translate-panel', state.root); var backdrop = $('.pv-modal-backdrop', state.root); var s = getTranslateSettings();
-    if (!panel || !backdrop) return;
     $('[name="sourceLang"]', panel).value = s.sourceLang || 'auto'; $('[name="targetLang"]', panel).value = s.targetLang || 'zh'; $('[name="provider"]', panel).value = s.provider || 'google';
     $('[name="aiEndpoint"]', panel).value = s.aiEndpoint || ''; $('[name="aiModel"]', panel).value = s.aiModel || ''; $('[name="aiApiKey"]', panel).value = s.aiApiKey || ''; $('[name="aiPrompt"]', panel).value = s.aiPrompt || DEFAULT_AI_PROMPT;
     panel.classList.toggle('is-ai', s.provider === 'ai'); $$('.pv-provider-tab', panel).forEach(function(t){ t.classList.toggle('is-active', (t.dataset.provider || 'google') === (s.provider || 'google')); });
     panel.classList.add('is-open'); backdrop.classList.add('is-open');
   }
-  function closeTranslateSettings() { var p = $('.pv-translate-panel', state.root), b = $('.pv-modal-backdrop', state.root); if (p) p.classList.remove('is-open'); if (b && !($('.pv-manage-panel', state.root) && $('.pv-manage-panel', state.root).classList.contains('is-open'))) b.classList.remove('is-open'); }
+  function closeTranslateSettings() { $('.pv-translate-panel', state.root).classList.remove('is-open'); $('.pv-modal-backdrop', state.root).classList.remove('is-open'); }
 
   function openViewer(images, index) {
     if (!images || !images.length) return;
@@ -1075,7 +870,7 @@
       var posts = Array.isArray(json.posts) ? json.posts.slice(1) : [];
       state.comments.posts = posts;
       renderComments(posts);
-    }).catch(function () { $('.pv-comments-list', panel).innerHTML = '<div class="pv-meta">加载失败，请稍后再试</div>'; });
+    }).catch(function () { $('.pv-comments-list', panel).innerHTML = '<div class="pv-meta">加载失败，<a href="' + item.href + '">' + TEXT.openTopic + '</a></div>'; });
   }
   function closeComments() { stopCommentRecording(true); setCommentVoice(null, 0); $('.pv-comments-panel', state.root).classList.remove('is-open'); $('.pv-drawer-backdrop', state.root).classList.remove('is-open'); }
   function renderComments(posts) {
@@ -1110,41 +905,26 @@
   function setCommentVoice(blob, duration) {
     if (state.comments.voiceUrl) { try { URL.revokeObjectURL(state.comments.voiceUrl); } catch (e) {} }
     state.comments.voiceBlob = blob || null;
-    state.comments.voiceDuration = Math.min(CONFIG.maxVoiceSeconds, Math.max(0, Math.round(Number(duration) || 0)));
+    state.comments.voiceDuration = Math.max(0, Math.round(Number(duration) || 0));
     state.comments.voiceUrl = blob ? URL.createObjectURL(blob) : '';
     var wrap = $('.pv-comment-voice-preview', state.root);
     if (!wrap) return;
-    wrap.innerHTML = blob ? renderVoiceCard({ url: state.comments.voiceUrl }, 'is-preview') + '<button type="button" class="pv-comment-voice-remove">×</button><button type="button" class="pv-comment-voice-send">' + TEXT.send + '</button>' : '';
+    wrap.innerHTML = blob ? renderVoiceCard({ url: state.comments.voiceUrl }, 'is-preview') + '<button type="button" class="pv-comment-voice-remove">×</button>' : ''; wrap.classList.toggle('is-open', !!blob); updateCommentActionButton();
     wrap.classList.toggle('is-open', !!blob);
-    updateCommentActionButton();
   }
   function toggleCommentRecording() {
     var btn = $('.pv-comment-action-btn', state.root);
     if (state.comments.mediaRecorder && state.comments.mediaRecorder.state === 'recording') { stopCommentRecording(false); return; }
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) return alertError('当前浏览器不支持录音');
-    setCommentVoice(null, 0);
     navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, echoCancellationType: 'system', noiseSuppression: true, autoGainControl: true } }).catch(function () { return navigator.mediaDevices.getUserMedia({ audio: true }); }).then(function (stream) {
       state.comments.stream = stream; state.comments.chunks = []; state.comments.startAt = Date.now();
       var mime = recorderMime(); var rec = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 16000 } : { audioBitsPerSecond: 16000 }); state.comments.mediaRecorder = rec;
       rec.ondataavailable = function (e) { if (e.data && e.data.size) state.comments.chunks.push(e.data); };
-      rec.onstop = function () {
-        var dur = Math.min(CONFIG.maxVoiceSeconds, Math.max(1, Math.round((Date.now() - state.comments.startAt) / 1000)));
-        if (state.comments.stream) state.comments.stream.getTracks().forEach(function (t) { t.stop(); });
-        clearInterval(state.comments.timer);
-        btn.classList.remove('recording');
-        $('.pv-comment-record-panel', state.root).classList.remove('is-open');
-        updateCommentActionButton();
-        if (state.comments.chunks.length) setCommentVoice(new Blob(state.comments.chunks, { type: state.comments.chunks[0].type || mime || 'audio/webm' }), dur);
-      };
-      rec.start(250); btn.classList.add('recording'); $('.pv-comment-record-panel', state.root).classList.add('is-open');
-      state.comments.timer = setInterval(function () {
-        var sec = Math.max(0, Math.floor((Date.now() - state.comments.startAt) / 1000));
-        var el = $('.pv-record-time', state.root); if (el) el.textContent = formatDuration(Math.min(sec, CONFIG.maxVoiceSeconds));
-        if (sec >= CONFIG.maxVoiceSeconds) stopCommentRecording(false);
-      }, 250);
+      rec.onstop = function () { var dur = Math.max(1, Math.round((Date.now() - state.comments.startAt) / 1000)); if (state.comments.stream) state.comments.stream.getTracks().forEach(function (t) { t.stop(); }); clearInterval(state.comments.timer); btn.classList.remove('recording'); $('.pv-comment-record-panel', state.root).classList.remove('is-open'); updateCommentActionButton(); if (state.comments.chunks.length) setCommentVoice(new Blob(state.comments.chunks, { type: state.comments.chunks[0].type || mime || 'audio/webm' }), dur); };
+      rec.start(250); btn.classList.add('recording'); $('.pv-comment-record-panel', state.root).classList.add('is-open'); state.comments.timer = setInterval(function () { var sec = Math.max(0, Math.floor((Date.now() - state.comments.startAt) / 1000)); var el = $('.pv-record-time', state.root); if (el) el.textContent = formatDuration(sec); }, 250);
     }).catch(function () { alertError('麦克风权限未开启'); });
   }
-  function stopCommentRecording(silent) { var rec = state.comments.mediaRecorder; if (rec && rec.state === 'recording') { try { rec.stop(); } catch (e) {} } if (state.comments.stream) state.comments.stream.getTracks().forEach(function (t) { t.stop(); }); clearInterval(state.comments.timer); var panel = $('.pv-comment-record-panel', state.root); if (panel) panel.classList.remove('is-open'); updateCommentActionButton(); }
+  function stopCommentRecording() { var rec = state.comments.mediaRecorder; if (rec && rec.state === 'recording') { try { rec.stop(); } catch (e) {} } if (state.comments.stream) state.comments.stream.getTracks().forEach(function (t) { t.stop(); }); clearInterval(state.comments.timer); var panel = $('.pv-comment-record-panel', state.root); if (panel) panel.classList.remove('is-open'); updateCommentActionButton(); }
   function updateCommentActionButton() { var btn = $('.pv-comment-action-btn', state.root); if (!btn) return; var input = $('.pv-comment-input', state.root); var hasText = !!norm(input && input.value); var recording = state.comments.mediaRecorder && state.comments.mediaRecorder.state === 'recording'; var hasVoice = !!state.comments.voiceBlob; btn.classList.toggle('is-send', hasText || hasVoice); btn.classList.toggle('recording', !!recording); btn.innerHTML = (hasText || hasVoice) ? iconSend() : (recording ? '<span class="pv-stop-dot"></span>' : iconMic()); }
   function handleCommentAction() { var input = $('.pv-comment-input', state.root); if ((input && norm(input.value)) || state.comments.voiceBlob) submitComment(); else toggleCommentRecording(); }
 
@@ -1163,12 +943,13 @@
       if (state.comments.replyTo && state.comments.replyTo.pid) payload.toPid = state.comments.replyTo.pid;
       return apiFetch('/api/v3/topics/' + encodeURIComponent(item.tid), { method: 'POST', headers: { 'content-type': 'application/json; charset=utf-8', 'x-csrf-token': csrfToken() }, body: JSON.stringify(payload) });
     }).then(function () { input.value = ''; clearReplyTarget(); setCommentVoice(null, 0); updateCommentActionButton(); item.counts.comments += 1; updateCountUi(item); openComments(item); })
-      .catch(function () { alertError(TEXT.commentFail); })
+      .catch(function () { alertError(TEXT.commentFail); window.open(item.href, '_blank'); })
       .finally(function () { if (btn) btn.disabled = false; });
   }
   function updateCountUi(item) { var slide = findSlide(state.list.indexOf(item)); if (!slide) return; var btn = $('.pv-comment-btn span:last-child', slide); if (btn) btn.textContent = formatCount(item.counts.comments); }
   function translateComment(commentEl) { var text = $('.pv-comment-text', commentEl); var box = $('.pv-comment-translated', commentEl); if (!text || !box) return; translateElementText(text.textContent || '', box); }
   function translateCommentInput() { var input = $('.pv-comment-input', state.root); var text = norm(input.value); if (!text) return; translateText(text).then(function (out) { if (out) { input.value = out; updateCommentActionButton(); } }).catch(function () { alertError(TEXT.translateFail); }); }
+
 
   function openManagePanel(item) {
     if (!item) return;
@@ -1182,7 +963,7 @@
     var panel = $('.pv-manage-panel', state.root);
     if (panel) panel.classList.remove('is-open');
     var backdrop = $('.pv-modal-backdrop', state.root);
-    if (backdrop && !($('.pv-translate-panel', state.root) && $('.pv-translate-panel', state.root).classList.contains('is-open'))) backdrop.classList.remove('is-open');
+    if (backdrop && !$('.pv-translate-panel', state.root).classList.contains('is-open')) backdrop.classList.remove('is-open');
   }
   function deleteManagedVideo() {
     var item = state.manageItem;
@@ -1205,9 +986,9 @@
 
   function showComposeFabInitial() { var fab = $('.pv-compose-fab', state.root); if (!fab) return; fab.classList.remove('is-hidden'); }
   function hideComposerFab() { var fab = $('.pv-compose-fab', state.root); if (!fab) return; fab.classList.add('is-hidden'); }
-  function openCompose() { pauseSlide(state.index, false); $('.pv-drawer-backdrop', state.root).classList.add('is-open'); $('.pv-compose-panel', state.root).classList.add('is-open'); hideComposerFab(); }
+  function openCompose() { pauseSlide(state.index); $('.pv-drawer-backdrop', state.root).classList.add('is-open'); $('.pv-compose-panel', state.root).classList.add('is-open'); hideComposerFab(); }
   function closeCompose() { $('.pv-compose-panel', state.root).classList.remove('is-open'); $('.pv-drawer-backdrop', state.root).classList.remove('is-open'); }
-  function resetCompose() { var p = $('.pv-compose-panel', state.root); $('textarea', p).value = ''; setPendingImages([]); setPendingVoice(null, 0); $('.pv-meta', p).textContent = ''; }
+  function resetCompose() { var p = $('.pv-compose-panel', state.root); $('textarea', p).value = ''; setPendingImages([]); $('.pv-meta', p).textContent = ''; }
 
   function canCanvasEncode(type) {
     return new Promise(function (resolve) {
@@ -1244,7 +1025,7 @@
     state.compose.imageFiles = list; state.compose.imageUrls = list.map(function (f) { return URL.createObjectURL(f); });
     $('.pv-preview-images', state.root).innerHTML = state.compose.imageUrls.map(function (u) { return '<img src="' + u + '" alt="preview">'; }).join('');
   }
-  function setPendingVoice(blob, duration) { if (state.compose.voiceUrl) URL.revokeObjectURL(state.compose.voiceUrl); state.compose.voiceBlob = blob || null; state.compose.voiceDuration = Math.max(0, Math.round(Number(duration) || 0)); state.compose.voiceUrl = blob ? URL.createObjectURL(blob) : ''; var meta = $('.pv-compose-panel .pv-meta', state.root); if (meta && blob) meta.textContent = TEXT.voiceMsg + ' ' + formatDuration(state.compose.voiceDuration); }
+  function setPendingVoice(blob, duration) { if (state.compose.voiceUrl) URL.revokeObjectURL(state.compose.voiceUrl); state.compose.voiceBlob = blob || null; state.compose.voiceDuration = Math.max(0, Math.round(Number(duration) || 0)); state.compose.voiceUrl = blob ? URL.createObjectURL(blob) : ''; var meta = $('.pv-compose-panel .pv-meta', state.root); if (blob) meta.textContent = TEXT.voiceMsg + ' ' + formatDuration(state.compose.voiceDuration); }
   function uploadToNodeBB(file) {
     var form = new FormData(); form.append('files[]', file); form.append('cid', String(CONFIG.cid));
     return fetch(rel('/api/post/upload'), { method: 'POST', credentials: 'same-origin', headers: { 'x-csrf-token': csrfToken(), 'x-requested-with': 'XMLHttpRequest' }, body: form })
@@ -1260,17 +1041,11 @@
   function sendTopic() {
     if (!isLoggedIn()) return alertError(TEXT.loginFirst);
     var panel = $('.pv-compose-panel', state.root); var textarea = $('textarea', panel); var text = norm(textarea.value);
-    if (!text && !state.compose.imageFiles.length && !state.compose.voiceBlob) return alertError(TEXT.enterSomething);
+    if (!text && !state.compose.imageFiles.length) return alertError(TEXT.enterSomething);
     var btn = $('.pv-compose-submit', panel); var meta = $('.pv-meta', panel); btn.disabled = true; btn.textContent = TEXT.publishing;
     var lines = []; if (text) lines.push(text);
     Promise.resolve().then(function () {
       var p = Promise.resolve(); state.compose.imageFiles.forEach(function (file, i) { p = p.then(function () { meta.textContent = TEXT.uploadImage + ' ' + (i + 1) + '/' + state.compose.imageFiles.length; return uploadToNodeBB(file).then(function (url) { lines.push('![image](' + url + ')'); }); }); }); return p;
-    }).then(function () {
-      if (!state.compose.voiceBlob) return;
-      meta.textContent = TEXT.uploadVoice;
-      var ext = /ogg/i.test(state.compose.voiceBlob.type) ? 'ogg' : 'webm';
-      var file = new File([state.compose.voiceBlob], 'voice-' + Date.now() + '.' + ext, { type: state.compose.voiceBlob.type || 'audio/webm' });
-      return uploadToNodeBB(file).then(function (url) { lines.push('[' + TEXT.voiceMsg + ' · ' + formatDuration(state.compose.voiceDuration || 1) + '](' + appendDurationParam(url, state.compose.voiceDuration || 1) + ')'); });
     }).then(function () {
       return apiFetch('/api/v3/topics', { method: 'POST', headers: { 'content-type': 'application/json; charset=utf-8', 'x-csrf-token': csrfToken() }, body: JSON.stringify({ cid: Number(CONFIG.cid), title: buildTitle(text), content: lines.join('\n\n'), tags: [] }) });
     }).then(function () { alertSuccess(TEXT.publishOk); resetCompose(); closeCompose(); loadFeed(true); })
@@ -1286,11 +1061,11 @@
       state.compose.stream = stream; state.compose.chunks = []; state.compose.startAt = Date.now();
       var mime = recorderMime(); var rec = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 16000 } : { audioBitsPerSecond: 16000 }); state.compose.mediaRecorder = rec;
       rec.ondataavailable = function (e) { if (e.data && e.data.size) state.compose.chunks.push(e.data); };
-      rec.onstop = function () { var dur = Math.min(CONFIG.maxVoiceSeconds, Math.max(1, Math.round((Date.now() - state.compose.startAt) / 1000))); if (state.compose.stream) state.compose.stream.getTracks().forEach(function (t) { t.stop(); }); clearInterval(state.compose.timer); btn.textContent = TEXT.record; if (state.compose.chunks.length) setPendingVoice(new Blob(state.compose.chunks, { type: state.compose.chunks[0].type || mime || 'audio/webm' }), dur); };
-      rec.start(250); btn.textContent = TEXT.stop; state.compose.timer = setInterval(function () { var sec = Math.floor((Date.now() - state.compose.startAt) / 1000); $('.pv-compose-panel .pv-meta', state.root).textContent = TEXT.voiceMsg + ' ' + formatDuration(Math.min(sec, CONFIG.maxVoiceSeconds)); if (sec >= CONFIG.maxVoiceSeconds) stopRecording(false); }, 250);
+      rec.onstop = function () { var dur = Math.max(1, Math.round((Date.now() - state.compose.startAt) / 1000)); if (state.compose.stream) state.compose.stream.getTracks().forEach(function (t) { t.stop(); }); clearInterval(state.compose.timer); btn.textContent = TEXT.record; if (state.compose.chunks.length) setPendingVoice(new Blob(state.compose.chunks, { type: state.compose.chunks[0].type || mime || 'audio/webm' }), dur); };
+      rec.start(250); btn.textContent = TEXT.stop; state.compose.timer = setInterval(function () { $('.pv-compose-panel .pv-meta', state.root).textContent = TEXT.voiceMsg + ' ' + formatDuration(Math.floor((Date.now() - state.compose.startAt) / 1000)); }, 250);
     }).catch(function () { alertError('麦克风权限未开启'); });
   }
-  function stopRecording(silent) { var rec = state.compose.mediaRecorder; if (rec && rec.state === 'recording') { try { rec.stop(); } catch (e) {} } if (state.compose.stream) state.compose.stream.getTracks().forEach(function (t) { t.stop(); }); clearInterval(state.compose.timer); if (!silent) { var b = $('.pv-record-btn', state.root); if (b) b.textContent = TEXT.record; } }
+  function stopRecording(silent) { var rec = state.compose.mediaRecorder; if (rec && rec.state === 'recording') { try { rec.stop(); } catch (e) {} } if (state.compose.stream) state.compose.stream.getTracks().forEach(function (t) { t.stop(); }); clearInterval(state.compose.timer); if (!silent) $('.pv-record-btn', state.root).textContent = TEXT.record; }
 
   function buildChrome() {
     state.root.innerHTML = '' +
@@ -1298,10 +1073,10 @@
         '<div class="pv-swiper swiper"><div class="swiper-wrapper"></div></div><div class="pv-source-notice">' + escapeHtml(TEXT.sourceNotice).replace(/\n/g, '<br>') + '</div>' +
         '<button type="button" class="pv-compose-fab">+</button>' +
         '<div class="pv-drawer-backdrop"></div><div class="pv-modal-backdrop"></div>' +
-        '<section class="pv-compose-panel" role="dialog"><div class="pv-panel-head"><div class="pv-panel-title">' + TEXT.publish + '</div><button type="button" class="pv-close pv-compose-close">×</button></div><textarea placeholder="' + TEXT.placeholder + '"></textarea><div class="pv-preview-images"></div><div class="pv-compose-tools"><input type="file" class="pv-image-input" accept="image/*" multiple hidden><button type="button" class="pv-tool pv-image-btn">' + TEXT.chooseImage + '</button><button type="button" class="pv-tool pv-record-btn">' + TEXT.record + '</button><button type="button" class="pv-tool pv-compose-translate" aria-label="' + TEXT.translate + '">' + iconTranslate() + '</button><button type="button" class="pv-primary pv-compose-submit">' + TEXT.send + '</button></div><div class="pv-meta"></div></section>' +
-        '<section class="pv-comments-panel" role="dialog"><div class="pv-panel-grip"></div><div class="pv-panel-head pv-comments-drag"><div class="pv-panel-title pv-comments-title">' + TEXT.comments + '</div><button type="button" class="pv-close pv-comments-close">×</button></div><div class="pv-comments-list"></div><div class="pv-reply-bar"><span>' + TEXT.replyTo + ' </span><b class="pv-reply-name"></b><button type="button" class="pv-reply-cancel">×</button></div><div class="pv-comment-voice-preview"></div><div class="pv-comment-record-panel"><div class="pv-record-pulse"></div><div class="pv-record-bars"><i></i><i></i><i></i><i></i><i></i></div><span class="pv-record-time">00:00</span><span class="pv-record-tip">' + TEXT.recordingTip + '</span><button type="button" class="pv-comment-record-stop">' + TEXT.stopRecording + '</button></div><div class="pv-comment-send-row"><div class="pv-comment-input-wrap"><button type="button" class="pv-comment-input-translate" aria-label="' + TEXT.translate + '" title="' + TEXT.translate + '">' + iconTranslate() + '</button><input class="pv-comment-input" placeholder="' + TEXT.commentPlaceholder + '"><button type="button" class="pv-comment-action-btn" aria-label="语音或发送">' + iconMic() + '</button></div></div></section>' +
+        '<section class="pv-compose-panel" role="dialog"><div class="pv-panel-head"><div class="pv-panel-title">' + TEXT.publish + '</div><button type="button" class="pv-close pv-compose-close">×</button></div><textarea placeholder="' + TEXT.placeholder + '"></textarea><div class="pv-preview-images"></div><div class="pv-compose-tools"><input type="file" class="pv-image-input" accept="image/*" multiple hidden><button type="button" class="pv-tool pv-image-btn">' + TEXT.chooseImage + '</button><button type="button" class="pv-tool pv-compose-translate" aria-label="' + TEXT.translate + '">' + iconTranslate() + '</button><button type="button" class="pv-primary pv-compose-submit">' + TEXT.send + '</button></div><div class="pv-meta"></div></section>' +
+        '<section class="pv-comments-panel" role="dialog"><div class="pv-panel-grip"></div><div class="pv-panel-head pv-comments-drag"><div class="pv-panel-title pv-comments-title">' + TEXT.comments + '</div><button type="button" class="pv-close pv-comments-close">×</button></div><div class="pv-comments-list"></div><div class="pv-reply-bar"><span>' + TEXT.replyTo + ' </span><b class="pv-reply-name"></b><button type="button" class="pv-reply-cancel">×</button></div><div class="pv-comment-voice-preview"></div><div class="pv-comment-record-panel"><div class="pv-record-pulse"></div><div class="pv-record-bars"><i></i><i></i><i></i><i></i><i></i></div><span class="pv-record-time">00:00</span><span class="pv-record-tip">正在录音，点右侧按钮停止</span></div><div class="pv-comment-send-row"><div class="pv-comment-input-wrap"><button type="button" class="pv-comment-input-translate" aria-label="' + TEXT.translate + '" title="' + TEXT.translate + '">' + iconTranslate() + '</button><input class="pv-comment-input" placeholder="' + TEXT.commentPlaceholder + '"><button type="button" class="pv-comment-action-btn" aria-label="语音或发送">' + iconMic() + '</button></div></div></section>' +
         '<section class="pv-translate-panel" role="dialog"><div class="pv-panel-head"><div class="pv-panel-title">' + TEXT.translateSettings + '</div><button type="button" class="pv-close pv-translate-close">×</button></div><div class="pv-provider-tabs"><button type="button" class="pv-provider-tab" data-provider="google">' + TEXT.google + '</button><button type="button" class="pv-provider-tab" data-provider="ai">' + TEXT.ai + '</button><input type="hidden" name="provider" value="google"></div><div class="pv-lang-row"><label><span>' + TEXT.sourceLang + '</span><select name="sourceLang">' + langOptions(true) + '</select></label><span class="pv-lang-arrow">⇄</span><label><span>' + TEXT.targetLang + '</span><select name="targetLang">' + langOptions(false) + '</select></label></div><div class="pv-ai-settings"><label>' + TEXT.aiEndpoint + '<input name="aiEndpoint" placeholder="https://api.example.com/v1"></label><label>' + TEXT.aiModel + '<input name="aiModel" placeholder="gpt-4.1-mini / qwen / deepseek"></label><label>' + TEXT.aiApiKey + '<input name="aiApiKey" type="password" placeholder="API Key"></label><label>' + TEXT.aiPrompt + '<textarea name="aiPrompt" rows="4"></textarea></label></div><div class="pv-translate-actions"><button type="button" class="pv-primary pv-translate-save">' + TEXT.save + '</button></div></section>' +
-        '<section class="pv-manage-panel" role="dialog"><button type="button" class="pv-manage-delete">' + TEXT.deleteVideo + '</button><button type="button" class="pv-manage-cancel">取消</button></section>' +
+        '<section class="pv-manage-panel" role="dialog"><button type="button" class="pv-manage-open-topic">' + TEXT.openOriginal + '</button><button type="button" class="pv-manage-delete">' + TEXT.deleteVideo + '</button><button type="button" class="pv-manage-cancel">取消</button></section>' +
         '<div class="pv-viewer"><div class="pv-viewer-swiper swiper"><div class="swiper-wrapper"></div><div class="pv-viewer-pagination"></div></div><button class="pv-viewer-close" aria-label="关闭">×</button></div>' +
       '</div>';
     bindChrome();
@@ -1336,29 +1111,18 @@
     $('.pv-image-input', state.root).addEventListener('change', function (e) { var files = Array.from(e.target.files || []).slice(0, CONFIG.imageMax); e.target.value = ''; if (files.find(function (f) { return !/^image\//i.test(f.type); })) return alertError(TEXT.imageOnly); compressImageFiles(files).then(setPendingImages); });
     $('.pv-compose-submit', state.root).addEventListener('click', sendTopic);
     $('.pv-compose-translate', state.root).addEventListener('click', translateComposeText);
-    $('.pv-record-btn', state.root).addEventListener('click', toggleRecording);
     $('.pv-comments-close', state.root).addEventListener('click', closeComments);
     $('.pv-reply-cancel', state.root).addEventListener('click', clearReplyTarget);
     $('.pv-comment-action-btn', state.root).addEventListener('click', handleCommentAction);
-    $('.pv-comment-record-stop', state.root).addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); stopCommentRecording(false); });
-    $('.pv-comment-voice-preview', state.root).addEventListener('click', function (e) {
-      var send = e.target.closest('.pv-comment-voice-send'); if (send) { e.preventDefault(); e.stopPropagation(); submitComment(); return; }
-      var rm = e.target.closest('.pv-comment-voice-remove'); if (rm) { e.preventDefault(); e.stopPropagation(); setCommentVoice(null, 0); return; }
-      var card = e.target.closest('.pv-voice-card'); if (card) { e.preventDefault(); e.stopPropagation(); toggleVoiceCard(card); }
-    });
-    $('.pv-comment-input-translate', state.root).addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); translateCommentInput(); });
+    $('.pv-comment-voice-preview', state.root).addEventListener('click', function (e) { var rm = e.target.closest('.pv-comment-voice-remove'); if (rm) { setCommentVoice(null, 0); return; } var card = e.target.closest('.pv-voice-card'); if (card) toggleVoiceCard(card); });
+    $('.pv-comment-input-translate', state.root).addEventListener('click', translateCommentInput);
     bindLongPress($('.pv-comment-input-translate', state.root), openTranslateSettings);
     $('.pv-comment-input', state.root).addEventListener('input', updateCommentActionButton);
-    $('.pv-comment-input', state.root).addEventListener('keydown', function (e) {
-      clearTimeout(state.translateLongPressTimer);
-      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
-        e.preventDefault(); e.stopPropagation();
-        if (norm(e.currentTarget.value) || state.comments.voiceBlob) submitComment();
-      }
-    });
+    $('.pv-comment-input', state.root).addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); if (norm(e.currentTarget.value) || state.comments.voiceBlob) submitComment(); } });
     $('.pv-translate-close', state.root).addEventListener('click', closeTranslateSettings);
     $('.pv-modal-backdrop', state.root).addEventListener('click', function(){ closeTranslateSettings(); closeManagePanel(); });
     $('.pv-manage-cancel', state.root).addEventListener('click', closeManagePanel);
+    $('.pv-manage-open-topic', state.root).addEventListener('click', function(){ var item = state.manageItem; if (item && item.href) location.href = rel(item.href); });
     $('.pv-manage-delete', state.root).addEventListener('click', deleteManagedVideo);
     $('.pv-translate-save', state.root).addEventListener('click', function () { var p = $('.pv-translate-panel', state.root); safeJsonSet('pv-translate-settings', { provider: $('[name="provider"]', p).value, sourceLang: $('[name="sourceLang"]', p).value, targetLang: $('[name="targetLang"]', p).value, aiEndpoint: $('[name="aiEndpoint"]', p).value, aiModel: $('[name="aiModel"]', p).value, aiApiKey: $('[name="aiApiKey"]', p).value, aiPrompt: $('[name="aiPrompt"]', p).value }); closeTranslateSettings(); });
     $$('.pv-provider-tab', state.root).forEach(function(tab){ tab.addEventListener('click', function(){ var p = $('.pv-translate-panel', state.root); $('[name="provider"]', p).value = tab.dataset.provider || 'google'; $$('.pv-provider-tab', p).forEach(function(t){ t.classList.toggle('is-active', t === tab); }); p.classList.toggle('is-ai', tab.dataset.provider === 'ai'); }); });
@@ -1366,20 +1130,10 @@
     $('.pv-viewer-close', viewer).addEventListener('click', closeViewer);
     viewer.addEventListener('pointerdown', function (e) { state.viewer.down = true; state.viewer.startX = e.clientX; state.viewer.startY = e.clientY; });
     viewer.addEventListener('pointerup', function (e) { if (!state.viewer.down) return; state.viewer.down = false; var dx = e.clientX - state.viewer.startX; var dy = e.clientY - state.viewer.startY; if (dy > 66 && Math.abs(dy) > Math.abs(dx)) closeViewer(); });
-    document.addEventListener('visibilitychange', function () { if (document.hidden) pauseSlide(state.index, false); else activateCurrent(false); });
+    document.addEventListener('visibilitychange', function () { if (document.hidden) pauseSlide(state.index); else activateCurrent(false); });
   }
-
-  function isTranslatePanelOpen() {
-    var p = $('.pv-translate-panel', state.root);
-    return !!(p && p.classList.contains('is-open'));
-  }
-
   function onRootClick(e) {
     var btn;
-    if (isTranslatePanelOpen() && !e.target.closest('.pv-translate-panel,.pv-translate-btn,.pv-comment-translate,.pv-comment-input-translate,.pv-compose-translate,.pv-modal-backdrop')) {
-      closeTranslateSettings();
-      return;
-    }
     if ((btn = e.target.closest('.pv-like'))) { e.preventDefault(); e.stopPropagation(); var i = Number(btn.dataset.index); toggleLike(state.list[i], findSlide(i), true); return; }
     if ((btn = e.target.closest('.pv-comment-btn'))) { e.preventDefault(); e.stopPropagation(); openComments(state.list[Number(btn.dataset.index)]); return; }
     if ((btn = e.target.closest('.pv-follow-plus'))) { e.preventDefault(); e.stopPropagation(); var idx = Number(btn.dataset.index); toggleFollow(state.list[idx], findSlide(idx)); return; }
@@ -1397,11 +1151,12 @@
     }
     var textRow = e.target.closest('.pv-text-row');
     var translateBtn = e.target.closest('.pv-translate-btn, .pv-comment-translate');
-    if ((textRow || translateBtn) && !e.target.closest('input, textarea, select')) { clearTimeout(state.translateLongPressTimer); state.translateLongPressTimer = setTimeout(function () { openTranslateSettings(); }, 650); }
+    if (textRow || translateBtn) { clearTimeout(state.translateLongPressTimer); state.translateLongPressTimer = setTimeout(function () { openTranslateSettings(); }, 650); }
     var tap = e.target.closest('.pv-tap-zone');
     if (tap) { state.hasInteracted = true; }
     var panel = $('.pv-comments-panel', state.root);
     if (panel && panel.classList.contains('is-open') && e.target.closest('.pv-comments-panel') && !e.target.closest('input,button,.pv-voice-card')) {
+      var rect = panel.getBoundingClientRect(); var list = e.target.closest('.pv-comments-list');
       state.comments.dragCandidate = true; state.comments.dragStartTopZone = true; state.comments.dragStartY = e.clientY; state.comments.dragY = 0;
     }
   }
@@ -1436,7 +1191,7 @@
 
   function init() {
     state.root = document.getElementById('peipe-video-app'); if (!state.root) return;
-    document.body.classList.add('pv-video-mode'); injectRuntimeStyles(); addPreconnects(); buildChrome(); showComposeFabInitial();
+    document.body.classList.add('pv-video-mode'); addPreconnects(); buildChrome(); showComposeFabInitial();
     ensureSwiper().then(function () { return loadFeed(true); });
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
