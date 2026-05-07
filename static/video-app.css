@@ -1821,7 +1821,7 @@ body.pv-video-mode [component="sidebar"] {
 }
 
 /* TikTok official controls must remain clickable on the right/bottom. */
-.pv-video-shell { --pv-crop-right: 44px !important; --pv-crop-bottom: 0px !important; }
+.pv-video-shell { --pv-crop-right: 54px !important; --pv-crop-bottom: 0px !important; }
 .pv-tiktok-frame { pointer-events: auto !important; }
 
 /* Cleaner icons */
