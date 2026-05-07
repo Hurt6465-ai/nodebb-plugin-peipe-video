@@ -369,7 +369,7 @@ plugin.clearCaches = async function clearCaches() {
 plugin.init = async function init(params) {
   const { router } = params;
   routeHelpers.setupPageRoute(router, '/video', [], (req, res) => {
-    res.render('video', {
+    res.render('peipe-video', {
       title: '发现',
       cid: CONFIG.cid,
       imageMax: CONFIG.imageMax,
