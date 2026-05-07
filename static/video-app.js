@@ -1,4 +1,4 @@
-/* Peipe /video mobile discover page v6
+/* Peipe /video mobile discover page v7
    - Independent /video page, official NodeBB plugin backend feed only
    - Swiper vertical feed with virtual slides
    - TikTok official embed keeps official audio controls; no custom center play button
@@ -8,13 +8,14 @@
 (function () {
   'use strict';
 
-  if (window.__peipeVideoDiscoverV6) return;
-  window.__peipeVideoDiscoverV6 = true;
+  if (window.__peipeVideoDiscoverV7) return;
+  window.__peipeVideoDiscoverV7 = true;
 
   var CONFIG = Object.assign({
     cid: 6,
     pageSize: 12,
-    preloadAhead: 3,
+    preloadAhead: 8,
+    preloadVideoAhead: 3,
     imageMax: 4,
     coverCacheMs: 7 * 24 * 60 * 60 * 1000,
     translateCacheMs: 3 * 24 * 60 * 60 * 1000,
@@ -38,7 +39,7 @@
     imageOnly: '请选择图片',
     uploadImage: '上传图片',
     uploadVoice: '上传语音',
-    enterSomething: '请输入内容、TikTok 链接、图片或语音',
+    enterSomething: '请输入内容、TikTok 链接或图片',
     comments: '评论',
     commentPlaceholder: '说点什么...',
     replyTo: '回复',
@@ -77,6 +78,7 @@
     tiktokGlobal: /https?:\/\/(?:www\.)?tiktok\.com\/@[^\/\s<>'"]+\/video\/(\d+)(?:\?[^\s<>'"]*)?/ig,
     tiktokOne: /https?:\/\/(?:www\.)?tiktok\.com\/@([^\/\s<>'"]+)\/video\/(\d+)/i,
     tiktokToken: /(?:https?[-:\/]+)?(?:www[.-])?tiktok[.-]com[-\/\w@.%=&?]+/ig,
+    tiktokShort: /https?:\/\/(?:vt|vm)\.tiktok\.com\/[^\s<>\'"]+/ig,
     audioExt: /\.(m4a|mp3|wav|ogg|oga|webm|aac)(?:[?#].*)?$/i
   };
 
@@ -95,9 +97,6 @@
     compose: {
       imageFiles: [],
       imageUrls: [],
-      voiceBlob: null,
-      voiceUrl: '',
-      voiceDuration: 0,
       mediaRecorder: null,
       stream: null,
       chunks: [],
@@ -182,6 +181,7 @@
     var lines = String(text || '')
       .replace(RE.tiktokGlobal, '')
       .replace(RE.tiktokToken, '')
+      .replace(RE.tiktokShort, '')
       .replace(/!\[[^\]]*\]\([^)]+\)/g, '')
       .replace(/\[\s*(?:语音消息|语音动态|voice\s*message|audio\s*message)[^\]]*\]\([^)]+\)/ig, '')
       .split(/[\r\n]+/)
@@ -281,8 +281,11 @@
     state.swiper = new window.Swiper(el, {
       direction: 'vertical',
       slidesPerView: 1,
-      speed: 240,
-      threshold: 3,
+      speed: 260,
+      threshold: 2,
+      touchStartPreventDefault: false,
+      touchMoveStopPropagation: false,
+      touchReleaseOnEdges: false,
       resistanceRatio: 0.38,
       longSwipesRatio: 0.12,
       followFinger: true,
@@ -293,14 +296,14 @@
       virtual: {
         enabled: true,
         addSlidesBefore: 2,
-        addSlidesAfter: 4,
+        addSlidesAfter: Math.max(10, CONFIG.preloadAhead + 4),
         slides: state.list.map(renderSlideHtml)
       },
       on: {
         init: function (swiper) {
           state.index = swiper.activeIndex || 0;
           afterVirtualUpdate();
-          activateCurrent(true);
+          activateCurrent(false);
           showComposeFabInitial();
         },
         slideChangeTransitionStart: function (swiper) {
@@ -339,6 +342,7 @@
       prepareSlide(index, false);
     });
     initImageSwipers();
+    preloadNextVideos(state.index);
   }
 
   function renderSlideHtml(item, index) {
@@ -369,7 +373,7 @@
         '<div class="pv-media">' + mediaHtml + '</div>' +
         (hasVideo ? '<div class="pv-cover"><img alt="cover"></div>' : '') +
         '<div class="pv-gradient"></div>' +
-        '<div class="pv-tap-zone" data-index="' + index + '"></div>' +
+        (hasVideo ? '<div class="pv-tap-zone" data-index="' + index + '"></div>' : '') +
         '<div class="pv-toolbar">' +
           '<div class="pv-avatar-wrap"><a href="' + authorHref(author) + '">' + avatarHtml + '</a>' +
           (author.uid && !isOwnAuthor(author) ? '<button type="button" class="pv-follow-plus ' + (following ? 'is-following' : '') + '" data-index="' + index + '">' + (following ? '✓' : '+') + '</button>' : '') + '</div>' +
@@ -386,7 +390,7 @@
   }
   function iconHeart(active) { return '<svg class="pv-heart-svg" viewBox="0 0 48 48" aria-hidden="true"><path d="M24 41s-2.2-1.3-5.2-3.4C10.2 31.4 5 25.8 5 18.6 5 12.7 9.5 8 15.2 8c3.5 0 6.6 1.8 8.8 4.7C26.2 9.8 29.3 8 32.8 8 38.5 8 43 12.7 43 18.6c0 7.2-5.2 12.8-13.8 19C26.2 39.7 24 41 24 41z"></path></svg>'; }
   function iconComment() { return '<svg class="pv-comment-svg" viewBox="0 0 48 48" aria-hidden="true"><path d="M24 7.5c-9.8 0-17.5 6.8-17.5 15.2 0 5.4 3.2 10.2 8 12.9l-.8 5.2 6.1-3.4c1.4.3 2.8.4 4.2.4 9.8 0 17.5-6.8 17.5-15.1S33.8 7.5 24 7.5z"></path><circle cx="17.4" cy="23.3" r="2.1"></circle><circle cx="24" cy="23.3" r="2.1"></circle><circle cx="30.6" cy="23.3" r="2.1"></circle></svg>'; }
-  function iconTranslate() { return '<svg class="pv-translate-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h8m-4-2v2m2 0c-.6 2.9-2.3 5.2-5 7m2.6-4.7c.8 1.3 1.8 2.4 3.2 3.3M13 21l4.7-11h1.1L23 21m-7.8-3h6.1"></path></svg>'; }
+  function iconTranslate() { return '<i class="fa-solid fa-language" aria-hidden="true"></i>'; }
   function iconMic() { return '<svg class="pv-mic-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3z"></path><path d="M5 11a7 7 0 0 0 14 0M12 18v3m-4 0h8"></path></svg>'; }
   function iconSend() { return '<svg class="pv-send-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h14M13 6l6 6-6 6"></path></svg>'; }
   function iconPhoto() { return '<svg viewBox="0 0 48 48" aria-hidden="true"><path d="M10 10h28a4 4 0 0 1 4 4v20a4 4 0 0 1-4 4H10a4 4 0 0 1-4-4V14a4 4 0 0 1 4-4zm5 23h18l-6-8-4 5-3-4-5 7zm2-13a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"></path></svg>'; }
@@ -494,9 +498,22 @@
   }
   function prepareSlide(index, autoplay) {
     if (index < 0 || index >= state.list.length) return;
+    var item = state.list[index];
+    if (!item || !(item.tiktoks && item.tiktoks[0])) return;
     var player = ensureTikTokPlayer(index, !!autoplay || (state.soundUnlocked && index === state.index));
     if (player && autoplay && player.iframe && !/autoplay=1/.test(player.iframe.src)) {
       player.iframe.src = buildPlayerUrl(player.videoId, true);
+    }
+  }
+  function preloadNextVideos(fromIndex) {
+    var found = 0;
+    var maxScan = Math.min(state.list.length - 1, fromIndex + Math.max(12, CONFIG.preloadAhead + 8));
+    for (var i = Math.max(0, fromIndex); i <= maxScan && found < (CONFIG.preloadVideoAhead || 3); i += 1) {
+      var it = state.list[i];
+      if (it && it.tiktoks && it.tiktoks[0]) {
+        prepareSlide(i, i === state.index && (state.hasInteracted || state.soundUnlocked));
+        found += 1;
+      }
     }
   }
   function activateCurrent(first) {
@@ -506,8 +523,8 @@
       slide.classList.toggle('is-active', idx === state.index);
       if (idx !== state.index) pauseSlide(idx);
     });
-    for (var i = 0; i <= CONFIG.preloadAhead; i += 1) prepareSlide(state.index + i, i === 0);
-    playSlide(state.index, true);
+    preloadNextVideos(state.index);
+    playSlide(state.index, !!(state.hasInteracted || state.soundUnlocked));
     prunePlayers();
   }
   function sendToPlayer(iframe, type, value) {
@@ -530,18 +547,22 @@
   }
   function playSlide(index, userGesture) {
     var item = state.list[index];
-    if (!item || !(item.tiktoks && item.tiktoks[0])) return;
+    if (!item || !(item.tiktoks && item.tiktoks[0])) { preloadNextVideos(index); return; }
     var player = ensureTikTokPlayer(index, !!userGesture);
     if (!player || !player.iframe) return;
     player.wantPlay = true;
-    if (userGesture && player.iframe && !/autoplay=1/.test(player.iframe.src)) { player.iframe.src = buildPlayerUrl(player.videoId, true); }
+    if ((userGesture || state.soundUnlocked) && player.iframe && !/autoplay=1/.test(player.iframe.src)) {
+      player.iframe.src = buildPlayerUrl(player.videoId, true);
+    }
     pauseOtherPlayers(player.key);
     var slide = findSlide(index);
     if (slide) slide.classList.add('is-loading');
-    if (userGesture) { state.soundUnlocked = true; safeJsonSet('pv-sound-unlocked', true); }
+    if (userGesture) { state.hasInteracted = true; state.soundUnlocked = true; safeJsonSet('pv-sound-unlocked', true); }
     sendToPlayer(player.iframe, 'unMute');
     sendToPlayer(player.iframe, 'play');
+    setTimeout(function () { sendToPlayer(player.iframe, 'play'); sendToPlayer(player.iframe, 'unMute'); }, 80);
     setTimeout(function () { sendToPlayer(player.iframe, 'unMute'); sendToPlayer(player.iframe, 'play'); }, 260);
+    setTimeout(function () { sendToPlayer(player.iframe, 'unMute'); sendToPlayer(player.iframe, 'play'); }, 720);
     setTimeout(function () { if (player.wantPlay && player.status !== 'playing') markSlidePlaying(index); }, 1800);
   }
   function pauseSlide(index) {
@@ -866,10 +887,10 @@
     wrap.classList.toggle('is-open', !!blob);
   }
   function toggleCommentRecording() {
-    var btn = $('.pv-comment-voice-btn', state.root);
+    var btn = $('.pv-comment-action-btn', state.root);
     if (state.comments.mediaRecorder && state.comments.mediaRecorder.state === 'recording') { stopCommentRecording(false); return; }
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) return alertError('当前浏览器不支持录音');
-    navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } }).then(function (stream) {
+    navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, echoCancellationType: 'system', noiseSuppression: true, autoGainControl: true } }).catch(function () { return navigator.mediaDevices.getUserMedia({ audio: true }); }).then(function (stream) {
       state.comments.stream = stream; state.comments.chunks = []; state.comments.startAt = Date.now();
       var mime = recorderMime(); var rec = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 16000 } : { audioBitsPerSecond: 16000 }); state.comments.mediaRecorder = rec;
       rec.ondataavailable = function (e) { if (e.data && e.data.size) state.comments.chunks.push(e.data); };
@@ -884,7 +905,7 @@
   function submitComment() {
     var item = state.comments.item; var input = $('.pv-comment-input', state.root); var text = norm(input.value);
     if (!item || (!text && !state.comments.voiceBlob)) return; if (!isLoggedIn()) return alertError(TEXT.loginFirst);
-    var btn = $('.pv-comment-submit', state.root); btn.disabled = true;
+    var btn = $('.pv-comment-action-btn', state.root); if (btn) btn.disabled = true;
     Promise.resolve().then(function () {
       var content = state.comments.replyTo ? ('@' + state.comments.replyTo.username + ' ' + text) : text;
       if (!state.comments.voiceBlob) return content;
@@ -897,17 +918,17 @@
       return apiFetch('/api/v3/topics/' + encodeURIComponent(item.tid), { method: 'POST', headers: { 'content-type': 'application/json; charset=utf-8', 'x-csrf-token': csrfToken() }, body: JSON.stringify(payload) });
     }).then(function () { input.value = ''; clearReplyTarget(); setCommentVoice(null, 0); updateCommentActionButton(); item.counts.comments += 1; updateCountUi(item); openComments(item); })
       .catch(function () { alertError(TEXT.commentFail); window.open(item.href, '_blank'); })
-      .finally(function () { btn.disabled = false; });
+      .finally(function () { if (btn) btn.disabled = false; });
   }
   function updateCountUi(item) { var slide = findSlide(state.list.indexOf(item)); if (!slide) return; var btn = $('.pv-comment-btn span:last-child', slide); if (btn) btn.textContent = formatCount(item.counts.comments); }
   function translateComment(commentEl) { var text = $('.pv-comment-text', commentEl); var box = $('.pv-comment-translated', commentEl); if (!text || !box) return; translateElementText(text.textContent || '', box); }
-  function translateCommentInput() { var input = $('.pv-comment-input', state.root); var text = norm(input.value); if (!text) return; translateText(text).then(function (out) { if (out) input.value = out; }).catch(function () { alertError(TEXT.translateFail); }); }
+  function translateCommentInput() { var input = $('.pv-comment-input', state.root); var text = norm(input.value); if (!text) return; translateText(text).then(function (out) { if (out) { input.value = out; updateCommentActionButton(); } }).catch(function () { alertError(TEXT.translateFail); }); }
 
   function showComposeFabInitial() { var fab = $('.pv-compose-fab', state.root); if (!fab) return; fab.classList.remove('is-hidden'); }
   function hideComposerFab() { var fab = $('.pv-compose-fab', state.root); if (!fab) return; fab.classList.add('is-hidden'); }
   function openCompose() { pauseSlide(state.index); $('.pv-drawer-backdrop', state.root).classList.add('is-open'); $('.pv-compose-panel', state.root).classList.add('is-open'); hideComposerFab(); }
   function closeCompose() { $('.pv-compose-panel', state.root).classList.remove('is-open'); $('.pv-drawer-backdrop', state.root).classList.remove('is-open'); }
-  function resetCompose() { var p = $('.pv-compose-panel', state.root); $('textarea', p).value = ''; setPendingImages([]); setPendingVoice(null, 0); $('.pv-meta', p).textContent = ''; }
+  function resetCompose() { var p = $('.pv-compose-panel', state.root); $('textarea', p).value = ''; setPendingImages([]); $('.pv-meta', p).textContent = ''; }
 
   function canCanvasEncode(type) {
     return new Promise(function (resolve) {
@@ -955,20 +976,15 @@
     while (q.length) { var cur = q.shift(); if (!cur || seen.has(cur)) continue; if (typeof cur === 'string' && (/^(https?:)?\//i.test(cur) || /^\/assets\//i.test(cur))) return cur; if (typeof cur !== 'object') continue; seen.add(cur); if (Array.isArray(cur)) q.push.apply(q, cur); else Object.keys(cur).forEach(function (k) { q.push(cur[k]); }); }
     throw new Error('upload url missing');
   }
-  function buildTitle(text) { var clean = norm(String(text || '').replace(RE.tiktokGlobal, '').replace(/!\[[^\]]*\]\([^)]+\)/g, '').replace(/\[[^\]]*\]\([^)]+\)/g, '')); return clean ? clean.slice(0, 80) : '动态'; }
+  function buildTitle(text) { var clean = norm(String(text || '').replace(RE.tiktokGlobal, '').replace(RE.tiktokShort, '').replace(/!\[[^\]]*\]\([^)]+\)/g, '').replace(/\[[^\]]*\]\([^)]+\)/g, '')); return clean ? clean.slice(0, 80) : '动态'; }
   function appendDurationParam(url, seconds) { try { var u = new URL(url, location.origin); u.searchParams.set('haa8dur', String(Math.max(1, seconds || 1))); return u.origin === location.origin ? u.pathname + u.search + u.hash : u.toString(); } catch (e) { return url + (String(url).indexOf('?') === -1 ? '?' : '&') + 'haa8dur=' + encodeURIComponent(seconds || 1); } }
   function sendTopic() {
     if (!isLoggedIn()) return alertError(TEXT.loginFirst);
     var panel = $('.pv-compose-panel', state.root); var textarea = $('textarea', panel); var text = norm(textarea.value);
-    if (!text && !state.compose.imageFiles.length && !state.compose.voiceBlob) return alertError(TEXT.enterSomething);
+    if (!text && !state.compose.imageFiles.length) return alertError(TEXT.enterSomething);
     var btn = $('.pv-compose-submit', panel); var meta = $('.pv-meta', panel); btn.disabled = true; btn.textContent = TEXT.publishing;
     var lines = []; if (text) lines.push(text);
     Promise.resolve().then(function () {
-      if (!state.compose.voiceBlob) return;
-      meta.textContent = TEXT.uploadVoice; var ext = /ogg/i.test(state.compose.voiceBlob.type) ? 'ogg' : 'webm';
-      var file = new File([state.compose.voiceBlob], 'voice-' + Date.now() + '.' + ext, { type: state.compose.voiceBlob.type || 'audio/webm' });
-      return uploadToNodeBB(file).then(function (url) { lines.push('[' + TEXT.voiceMsg + ' · ' + formatDuration(state.compose.voiceDuration || 1) + '](' + appendDurationParam(url, state.compose.voiceDuration || 1) + ')'); });
-    }).then(function () {
       var p = Promise.resolve(); state.compose.imageFiles.forEach(function (file, i) { p = p.then(function () { meta.textContent = TEXT.uploadImage + ' ' + (i + 1) + '/' + state.compose.imageFiles.length; return uploadToNodeBB(file).then(function (url) { lines.push('![image](' + url + ')'); }); }); }); return p;
     }).then(function () {
       return apiFetch('/api/v3/topics', { method: 'POST', headers: { 'content-type': 'application/json; charset=utf-8', 'x-csrf-token': csrfToken() }, body: JSON.stringify({ cid: Number(CONFIG.cid), title: buildTitle(text), content: lines.join('\n\n'), tags: [] }) });
@@ -997,8 +1013,8 @@
         '<div class="pv-swiper swiper"><div class="swiper-wrapper"></div></div>' +
         '<button type="button" class="pv-compose-fab">+</button>' +
         '<div class="pv-drawer-backdrop"></div><div class="pv-modal-backdrop"></div>' +
-        '<section class="pv-compose-panel" role="dialog"><div class="pv-panel-head"><div class="pv-panel-title">' + TEXT.publish + '</div><button type="button" class="pv-close pv-compose-close">×</button></div><textarea placeholder="' + TEXT.placeholder + '"></textarea><div class="pv-preview-images"></div><div class="pv-compose-tools"><input type="file" class="pv-image-input" accept="image/*" multiple hidden><button type="button" class="pv-tool pv-image-btn">' + TEXT.chooseImage + '</button><button type="button" class="pv-tool pv-record-btn">' + TEXT.record + '</button><button type="button" class="pv-primary pv-compose-submit">' + TEXT.send + '</button></div><div class="pv-meta"></div></section>' +
-        '<section class="pv-comments-panel" role="dialog"><div class="pv-panel-grip"></div><div class="pv-panel-head pv-comments-drag"><div class="pv-panel-title pv-comments-title">' + TEXT.comments + '</div><button type="button" class="pv-close pv-comments-close">×</button></div><div class="pv-comments-list"></div><div class="pv-reply-bar"><span>' + TEXT.replyTo + ' </span><b class="pv-reply-name"></b><button type="button" class="pv-reply-cancel">×</button></div><div class="pv-comment-voice-preview"></div><div class="pv-comment-record-panel"><div class="pv-record-pulse"></div><div class="pv-record-bars"><i></i><i></i><i></i><i></i><i></i></div><span class="pv-record-time">00:00</span><span class="pv-record-tip">松开后可试听发送</span></div><div class="pv-comment-send-row"><button type="button" class="pv-comment-input-translate" aria-label="' + TEXT.translate + '" title="' + TEXT.translate + '">' + iconTranslate() + '</button><input class="pv-comment-input" placeholder="' + TEXT.commentPlaceholder + '"><button type="button" class="pv-comment-action-btn" aria-label="语音或发送">' + iconMic() + '</button></div></section>' +
+        '<section class="pv-compose-panel" role="dialog"><div class="pv-panel-head"><div class="pv-panel-title">' + TEXT.publish + '</div><button type="button" class="pv-close pv-compose-close">×</button></div><textarea placeholder="' + TEXT.placeholder + '"></textarea><div class="pv-preview-images"></div><div class="pv-compose-tools"><input type="file" class="pv-image-input" accept="image/*" multiple hidden><button type="button" class="pv-tool pv-image-btn">' + TEXT.chooseImage + '</button><button type="button" class="pv-primary pv-compose-submit">' + TEXT.send + '</button></div><div class="pv-meta"></div></section>' +
+        '<section class="pv-comments-panel" role="dialog"><div class="pv-panel-grip"></div><div class="pv-panel-head pv-comments-drag"><div class="pv-panel-title pv-comments-title">' + TEXT.comments + '</div><button type="button" class="pv-close pv-comments-close">×</button></div><div class="pv-comments-list"></div><div class="pv-reply-bar"><span>' + TEXT.replyTo + ' </span><b class="pv-reply-name"></b><button type="button" class="pv-reply-cancel">×</button></div><div class="pv-comment-voice-preview"></div><div class="pv-comment-record-panel"><div class="pv-record-pulse"></div><div class="pv-record-bars"><i></i><i></i><i></i><i></i><i></i></div><span class="pv-record-time">00:00</span><span class="pv-record-tip">正在录音，点右侧按钮停止</span></div><div class="pv-comment-send-row"><div class="pv-comment-input-wrap"><button type="button" class="pv-comment-input-translate" aria-label="' + TEXT.translate + '" title="' + TEXT.translate + '">' + iconTranslate() + '</button><input class="pv-comment-input" placeholder="' + TEXT.commentPlaceholder + '"><button type="button" class="pv-comment-action-btn" aria-label="语音或发送">' + iconMic() + '</button></div></div></section>' +
         '<section class="pv-translate-panel" role="dialog"><div class="pv-panel-head"><div class="pv-panel-title">' + TEXT.translateSettings + '</div><button type="button" class="pv-close pv-translate-close">×</button></div><div class="pv-provider-tabs"><button type="button" class="pv-provider-tab" data-provider="google">' + TEXT.google + '</button><button type="button" class="pv-provider-tab" data-provider="ai">' + TEXT.ai + '</button><input type="hidden" name="provider" value="google"></div><div class="pv-lang-row"><label><span>' + TEXT.sourceLang + '</span><select name="sourceLang">' + langOptions(true) + '</select></label><span class="pv-lang-arrow">⇄</span><label><span>' + TEXT.targetLang + '</span><select name="targetLang">' + langOptions(false) + '</select></label></div><div class="pv-ai-settings"><label>' + TEXT.aiEndpoint + '<input name="aiEndpoint" placeholder="https://api.example.com/v1"></label><label>' + TEXT.aiModel + '<input name="aiModel" placeholder="gpt-4.1-mini / qwen / deepseek"></label><label>' + TEXT.aiApiKey + '<input name="aiApiKey" type="password" placeholder="API Key"></label><label>' + TEXT.aiPrompt + '<textarea name="aiPrompt" rows="4"></textarea></label></div><div class="pv-translate-actions"><button type="button" class="pv-primary pv-translate-save">' + TEXT.save + '</button></div></section>' +
         '<div class="pv-viewer"><div class="pv-viewer-swiper swiper"><div class="swiper-wrapper"></div><div class="pv-viewer-pagination"></div></div><button class="pv-viewer-close" aria-label="关闭">×</button></div>' +
       '</div>';
@@ -1013,6 +1029,14 @@
     ['pointerup','pointercancel','pointerleave'].forEach(function (n) { el.addEventListener(n, function () { clearTimeout(timer); timer = 0; }); });
   }
 
+  function unlockSoundFromGesture() {
+    if (state.hasInteracted && state.soundUnlocked) return;
+    state.hasInteracted = true;
+    state.soundUnlocked = true;
+    safeJsonSet('pv-sound-unlocked', true);
+    playSlide(state.index, true);
+  }
+
   function bindChrome() {
     state.root.addEventListener('click', onRootClick, true);
     state.root.addEventListener('pointerdown', onRootPointerDown, true);
@@ -1024,7 +1048,6 @@
     $('.pv-drawer-backdrop', state.root).addEventListener('click', function () { closeCompose(); closeComments(); });
     $('.pv-image-btn', state.root).addEventListener('click', function () { $('.pv-image-input', state.root).click(); });
     $('.pv-image-input', state.root).addEventListener('change', function (e) { var files = Array.from(e.target.files || []).slice(0, CONFIG.imageMax); e.target.value = ''; if (files.find(function (f) { return !/^image\//i.test(f.type); })) return alertError(TEXT.imageOnly); compressImageFiles(files).then(setPendingImages); });
-    $('.pv-record-btn', state.root).addEventListener('click', toggleRecording);
     $('.pv-compose-submit', state.root).addEventListener('click', sendTopic);
     $('.pv-comments-close', state.root).addEventListener('click', closeComments);
     $('.pv-reply-cancel', state.root).addEventListener('click', clearReplyTarget);
@@ -1057,6 +1080,9 @@
     if ((btn = e.target.closest('.pv-text-row'))) { if (!e.target.closest('.pv-translate-btn')) btn.classList.toggle('is-expanded'); }
   }
   function onRootPointerDown(e) {
+    if (!e.target.closest('input, textarea, select, .pv-comments-panel, .pv-compose-panel, .pv-translate-panel, .pv-viewer')) {
+      unlockSoundFromGesture();
+    }
     var textRow = e.target.closest('.pv-text-row');
     var translateBtn = e.target.closest('.pv-translate-btn, .pv-comment-translate');
     if (textRow || translateBtn) { clearTimeout(state.translateLongPressTimer); state.translateLongPressTimer = setTimeout(function () { openTranslateSettings(); }, 650); }
