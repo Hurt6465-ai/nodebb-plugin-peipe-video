@@ -8,7 +8,7 @@
   window.PEIPE_VIDEO_CONFIG = Object.assign({}, window.PEIPE_VIDEO_CONFIG || {}, {
     cid: {cid},
     pageSize: 12,
-    preloadAhead: 9.1,
+    preloadAhead: 10.1,
     preloadVideoAhead: 3,
     imageMax: {imageMax},
     swiperCdnCss: '/plugins/nodebb-plugin-peipe-video/static/lib/swiper-bundle.min.css',
