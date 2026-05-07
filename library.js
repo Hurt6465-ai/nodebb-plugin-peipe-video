@@ -34,6 +34,7 @@ let Topics;
 let Posts;
 let User;
 let routeReady = false;
+let Privileges;
 
 function now() { return Date.now(); }
 function norm(value) { return String(value || '').replace(/\s+/g, ' ').trim(); }
@@ -120,7 +121,12 @@ function cleanDisplayText(text) {
     .replace(/<[^>]*>/g, ' ')
     .replace(/&nbsp;/g, ' ')
     .replace(/&amp;/g, '&');
-  return raw.split(/[\r\n]+/).map(norm).filter(Boolean).join('\n');
+  return raw.split(/[\r\n]+/).map(norm).filter(function (line) {
+    if (!line) return false;
+    if (/^https?:\/\/(?:vt|vm|www\.)?tiktok\./i.test(line)) return false;
+    if (/^(?:动态|新动态|图片分享|图片动态|语音消息|语音动态|voice message|audio message|image|photo|picture)(?:\s*:?\s*\d{1,2}:\d{2}(?::\d{2})?)?$/i.test(line)) return false;
+    return true;
+  }).join('\n');
 }
 function parseMediaFromContent(content) {
   const raw = String(content || '');
@@ -167,6 +173,7 @@ async function ensureModules() {
   Topics = Topics || await getModule('./src/topics');
   Posts = Posts || await getModule('./src/posts');
   User = User || await getModule('./src/user');
+  Privileges = Privileges || await getModule('./src/privileges');
   routeReady = true;
 }
 async function getTopicData(tid) {
@@ -286,9 +293,28 @@ async function getViewer(uid, item) {
     }
   } catch (err) {}
 
-  const viewer = { liked, following, canComment: true };
+  const viewer = { liked, following, canComment: true, canManage: await canManageItem(uid, item) };
   return setCached(key, viewer, CONFIG.viewerTtl);
 }
+
+async function canManageItem(uid, item) {
+  if (!uid || !item) return false;
+  try {
+    if (User && typeof User.isAdministrator === 'function' && await User.isAdministrator(uid)) return true;
+    if (User && typeof User.isGlobalModerator === 'function' && await User.isGlobalModerator(uid)) return true;
+    if (item.author && String(item.author.uid || '') === String(uid)) return true;
+    if (Privileges && Privileges.categories && typeof Privileges.categories.isModerator === 'function') {
+      const mod = await Privileges.categories.isModerator(item.cid || CONFIG.cid, uid);
+      if (mod) return true;
+    }
+    if (User && typeof User.isModerator === 'function') {
+      const mod = await User.isModerator(uid, item.cid || CONFIG.cid);
+      if (mod) return true;
+    }
+  } catch (err) {}
+  return false;
+}
+
 async function getTids(cid, start, stop) {
   await ensureModules();
   if (!db || typeof db.getSortedSetRevRange !== 'function') return [];
@@ -351,6 +377,28 @@ plugin.init = async function init(params) {
   });
 };
 
+
+async function deleteTopicForUser(tid, uid) {
+  await ensureModules();
+  const item = await buildPublicItem(tid);
+  if (!item) {
+    const err = new Error('not-found');
+    err.statusCode = 404;
+    throw err;
+  }
+  const allowed = await canManageItem(uid, item);
+  if (!allowed) {
+    const err = new Error('no-permission');
+    err.statusCode = 403;
+    throw err;
+  }
+  if (Topics && typeof Topics.delete === 'function') return await Topics.delete(tid, uid);
+  if (Topics && typeof Topics.deleteTopic === 'function') return await Topics.deleteTopic(tid, uid);
+  const err = new Error('delete-not-supported');
+  err.statusCode = 500;
+  throw err;
+}
+
 plugin.addRoutes = async function addRoutes({ router, middleware, helpers }) {
   await ensureModules();
 
@@ -369,6 +417,21 @@ plugin.addRoutes = async function addRoutes({ router, middleware, helpers }) {
   routeHelpers.setupApiRoute(router, 'post', '/peipe-video/cache/purge', [middleware.admin.checkPrivileges], async (req, res) => {
     invalidateFeedCaches();
     helpers.formatApiResponse(200, res, { ok: true });
+  });
+
+  routeHelpers.setupApiRoute(router, 'delete', '/peipe-video/topics/:tid', [middleware.authenticate], async (req, res) => {
+    try {
+      const uid = getReqUid(req);
+      const tid = String(req.params.tid || '');
+      if (!uid) return helpers.formatApiResponse(401, res, { error: 'not-logged-in' });
+      if (!/^\d+$/.test(tid)) return helpers.formatApiResponse(400, res, { error: 'invalid-topic-id' });
+      await deleteTopicForUser(tid, uid);
+      invalidateFeedCaches();
+      helpers.formatApiResponse(200, res, { ok: true, tid });
+    } catch (err) {
+      winston.error(`[nodebb-plugin-peipe-video] delete failed: ${err.stack || err.message}`);
+      helpers.formatApiResponse(err.statusCode || 500, res, { error: err.message || 'delete-failed' });
+    }
   });
 };
 
