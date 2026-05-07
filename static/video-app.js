@@ -1,4 +1,4 @@
-/* Peipe /video mobile discover page v5
+/* Peipe /video mobile discover page v6
    - Independent /video page, official NodeBB plugin backend feed only
    - Swiper vertical feed with virtual slides
    - TikTok official embed keeps official audio controls; no custom center play button
@@ -8,8 +8,8 @@
 (function () {
   'use strict';
 
-  if (window.__peipeVideoDiscoverV5) return;
-  window.__peipeVideoDiscoverV5 = true;
+  if (window.__peipeVideoDiscoverV6) return;
+  window.__peipeVideoDiscoverV6 = true;
 
   var CONFIG = Object.assign({
     cid: 6,
@@ -106,7 +106,7 @@
     },
     viewer: { images: [], index: 0, swiper: null, startX: 0, startY: 0, down: false },
     imageSwipers: new Map(),
-    soundUnlocked: false,
+    soundUnlocked: !!safeJsonGet('pv-sound-unlocked', false),
     comments: { item: null, posts: [], loading: false, replyTo: null, dragY: 0, dragStartY: 0, dragging: false, dragCandidate: false, dragStartTopZone: false, voiceBlob: null, voiceUrl: '', voiceDuration: 0, mediaRecorder: null, stream: null, chunks: [], startAt: 0, timer: 0 },
     translateLongPressTimer: 0
   };
@@ -379,13 +379,16 @@
         '</div>' +
         '<div class="pv-desc">' +
           '<a class="pv-username" href="' + authorHref(author) + '">@' + escapeHtml(author.username || author.userslug || '用户') + '</a>' +
-          (hasText ? '<div class="pv-text-row" data-index="' + index + '"><span class="pv-text-main">' + escapeHtml(text) + '</span></div><button type="button" class="pv-translate-btn" data-index="' + index + '">' + TEXT.translate + '</button><div class="pv-translated"></div>' : '') +
+          (hasText ? '<div class="pv-text-row" data-index="' + index + '"><span class="pv-text-main">' + escapeHtml(text) + '</span> <button type="button" class="pv-translate-btn" data-index="' + index + '" aria-label="' + TEXT.translate + '" title="' + TEXT.translate + '">' + iconTranslate() + '</button></div><div class="pv-translated"></div>' : '') +
           '<div class="pv-time">' + relativeTime(item.createdAt) + '</div>' +
         '</div>' +
       '</section>';
   }
-  function iconHeart(active) { return '<svg viewBox="0 0 48 48" aria-hidden="true"><path d="M24 41s-2.2-1.3-5.2-3.4C10.2 31.4 5 25.8 5 18.6 5 12.7 9.5 8 15.2 8c3.5 0 6.6 1.8 8.8 4.7C26.2 9.8 29.3 8 32.8 8 38.5 8 43 12.7 43 18.6c0 7.2-5.2 12.8-13.8 19C26.2 39.7 24 41 24 41z"></path></svg>'; }
-  function iconComment() { return '<svg viewBox="0 0 48 48" aria-hidden="true"><path d="M24 8C14.6 8 7 14.7 7 23c0 4.9 2.7 9.3 6.9 12l-.9 5.2c-.1.8.7 1.4 1.4.9l5.6-3.3c1.3.2 2.6.3 4 .3 9.4 0 17-6.7 17-15S33.4 8 24 8zm-7 17a2.4 2.4 0 1 1 0-4.8A2.4 2.4 0 0 1 17 25zm7 0a2.4 2.4 0 1 1 0-4.8A2.4 2.4 0 0 1 24 25zm7 0a2.4 2.4 0 1 1 0-4.8A2.4 2.4 0 0 1 31 25z"></path></svg>'; }
+  function iconHeart(active) { return '<svg class="pv-heart-svg" viewBox="0 0 48 48" aria-hidden="true"><path d="M24 41s-2.2-1.3-5.2-3.4C10.2 31.4 5 25.8 5 18.6 5 12.7 9.5 8 15.2 8c3.5 0 6.6 1.8 8.8 4.7C26.2 9.8 29.3 8 32.8 8 38.5 8 43 12.7 43 18.6c0 7.2-5.2 12.8-13.8 19C26.2 39.7 24 41 24 41z"></path></svg>'; }
+  function iconComment() { return '<svg class="pv-comment-svg" viewBox="0 0 48 48" aria-hidden="true"><path d="M24 7.5c-9.8 0-17.5 6.8-17.5 15.2 0 5.4 3.2 10.2 8 12.9l-.8 5.2 6.1-3.4c1.4.3 2.8.4 4.2.4 9.8 0 17.5-6.8 17.5-15.1S33.8 7.5 24 7.5z"></path><circle cx="17.4" cy="23.3" r="2.1"></circle><circle cx="24" cy="23.3" r="2.1"></circle><circle cx="30.6" cy="23.3" r="2.1"></circle></svg>'; }
+  function iconTranslate() { return '<svg class="pv-translate-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h8m-4-2v2m2 0c-.6 2.9-2.3 5.2-5 7m2.6-4.7c.8 1.3 1.8 2.4 3.2 3.3M13 21l4.7-11h1.1L23 21m-7.8-3h6.1"></path></svg>'; }
+  function iconMic() { return '<svg class="pv-mic-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3z"></path><path d="M5 11a7 7 0 0 0 14 0M12 18v3m-4 0h8"></path></svg>'; }
+  function iconSend() { return '<svg class="pv-send-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h14M13 6l6 6-6 6"></path></svg>'; }
   function iconPhoto() { return '<svg viewBox="0 0 48 48" aria-hidden="true"><path d="M10 10h28a4 4 0 0 1 4 4v20a4 4 0 0 1-4 4H10a4 4 0 0 1-4-4V14a4 4 0 0 1 4-4zm5 23h18l-6-8-4 5-3-4-5 7zm2-13a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"></path></svg>'; }
   function getImageIndex(item) {
     var key = String(item && (item.tid || item.pid || state.list.indexOf(item)) || '');
@@ -491,7 +494,10 @@
   }
   function prepareSlide(index, autoplay) {
     if (index < 0 || index >= state.list.length) return;
-    ensureTikTokPlayer(index, !!autoplay || (state.soundUnlocked && index === state.index));
+    var player = ensureTikTokPlayer(index, !!autoplay || (state.soundUnlocked && index === state.index));
+    if (player && autoplay && player.iframe && !/autoplay=1/.test(player.iframe.src)) {
+      player.iframe.src = buildPlayerUrl(player.videoId, true);
+    }
   }
   function activateCurrent(first) {
     state.index = state.swiper ? state.swiper.activeIndex : state.index;
@@ -501,13 +507,14 @@
       if (idx !== state.index) pauseSlide(idx);
     });
     for (var i = 0; i <= CONFIG.preloadAhead; i += 1) prepareSlide(state.index + i, i === 0);
-    playSlide(state.index, state.soundUnlocked || (!first && state.hasInteracted));
+    playSlide(state.index, true);
+    prunePlayers();
   }
   function sendToPlayer(iframe, type, value) {
     if (!iframe || !iframe.contentWindow) return;
     var msg = { 'x-tiktok-player': true, type: type };
     if (arguments.length >= 3) msg.value = value;
-    iframe.contentWindow.postMessage(msg, '*');
+    iframe.contentWindow.postMessage(msg, 'https://www.tiktok.com');
   }
   function hardStopPlayer(player) {
     if (!player || !player.iframe) return;
@@ -527,10 +534,11 @@
     var player = ensureTikTokPlayer(index, !!userGesture);
     if (!player || !player.iframe) return;
     player.wantPlay = true;
+    if (userGesture && player.iframe && !/autoplay=1/.test(player.iframe.src)) { player.iframe.src = buildPlayerUrl(player.videoId, true); }
     pauseOtherPlayers(player.key);
     var slide = findSlide(index);
     if (slide) slide.classList.add('is-loading');
-    if (userGesture) state.soundUnlocked = true;
+    if (userGesture) { state.soundUnlocked = true; safeJsonSet('pv-sound-unlocked', true); }
     sendToPlayer(player.iframe, 'unMute');
     sendToPlayer(player.iframe, 'play');
     setTimeout(function () { sendToPlayer(player.iframe, 'unMute'); sendToPlayer(player.iframe, 'play'); }, 260);
@@ -548,7 +556,7 @@
   function pauseOtherPlayers(currentKey) {
     state.players.forEach(function (p, key) {
       if (key === currentKey) return;
-      var wasActive = p.wantPlay || p.status === 'playing' || Math.abs(p.index - state.index) > CONFIG.preloadAhead;
+      var wasActive = p.wantPlay || p.status === 'playing' || p.index < state.index || Math.abs(p.index - state.index) > CONFIG.preloadAhead;
       p.wantPlay = false; p.status = 'paused';
       if (p.iframe) {
         sendToPlayer(p.iframe, 'pause');
@@ -557,6 +565,14 @@
       }
       var slide = findSlide(p.index);
       if (slide) slide.classList.remove('is-playing', 'is-loading');
+    });
+  }
+  function prunePlayers() {
+    var keep = CONFIG.preloadAhead + 2;
+    state.players.forEach(function (p, key) {
+      if (Math.abs(p.index - state.index) <= keep) return;
+      try { if (p.iframe) { sendToPlayer(p.iframe, 'pause'); p.iframe.src = 'about:blank'; p.iframe.remove(); } } catch (e) {}
+      state.players.delete(key);
     });
   }
   function markSlidePlaying(index) {
@@ -573,7 +589,7 @@
     if (!data || !data['x-tiktok-player']) return;
     var host = '';
     try { host = new URL(event.origin).hostname; } catch (e) {}
-    if (host && !/(^|\.)tiktok\.com$|(^|\.)tiktokcdn\.com$/.test(host)) return;
+    if (!host || !/(^|\.)tiktok\.com$|(^|\.)tiktokcdn\.com$/.test(host)) return;
     state.players.forEach(function (player) {
       if (!player.iframe || player.iframe.contentWindow !== event.source) return;
       if (data.type === 'onPlayerReady') {
@@ -583,7 +599,7 @@
       }
       if (data.type === 'onStateChange') {
         var value = Number(data.value); var word = String(data.value || '').toLowerCase();
-        if (value === 1 || word === 'playing') { player.status = 'playing'; state.soundUnlocked = true; pauseOtherPlayers(player.key); markSlidePlaying(player.index); }
+        if (value === 1 || word === 'playing') { player.status = 'playing'; state.soundUnlocked = true; safeJsonSet('pv-sound-unlocked', true); pauseOtherPlayers(player.key); markSlidePlaying(player.index); }
         else if (value === 2 || value === 0 || word === 'paused' || word === 'ended') { player.status = 'paused'; var s = findSlide(player.index); if (s) s.classList.remove('is-playing', 'is-loading'); }
         else if (value === 3 || word === 'buffering') { var s2 = findSlide(player.index); if (s2 && player.wantPlay) s2.classList.add('is-loading'); }
       }
@@ -624,9 +640,11 @@
     state.root.appendChild(heart); setTimeout(function () { heart.remove(); }, 760);
   }
 
-  function voteStore() { return safeJsonGet('pv-vote-state', {}); }
+  function localUserSuffix() { var u = currentUser(); return String(u && u.uid || 'guest'); }
+  function voteStoreKey() { return 'pv-vote-state:' + localUserSuffix(); }
+  function voteStore() { return safeJsonGet(voteStoreKey(), {}); }
   function readVote(pid, tid) { var s = voteStore(); if (pid && s['pid:' + pid] !== undefined) return !!s['pid:' + pid]; if (tid && s['tid:' + tid] !== undefined) return !!s['tid:' + tid]; return false; }
-  function writeVote(pid, tid, voted) { var s = voteStore(); if (pid) s['pid:' + pid] = !!voted; if (tid) s['tid:' + tid] = !!voted; safeJsonSet('pv-vote-state', s); }
+  function writeVote(pid, tid, voted) { var s = voteStore(); if (pid) s['pid:' + pid] = !!voted; if (tid) s['tid:' + tid] = !!voted; safeJsonSet(voteStoreKey(), s); }
   function toggleLike(item, slide, optimistic, point) {
     if (!isLoggedIn()) return alertError(TEXT.loginFirst);
     if (!item.pid) return alertError(TEXT.likeFail);
@@ -644,11 +662,12 @@
   }
   function updateLikeUi(slide, item) {
     if (!slide) return; var btn = $('.pv-like', slide); if (!btn) return;
-    btn.classList.toggle('is-active', !!item.viewer.liked); $('.pv-action-icon', btn).textContent = iconHeart(!!item.viewer.liked); $('span:last-child', btn).textContent = formatCount(item.counts.likes);
+    btn.classList.toggle('is-active', !!item.viewer.liked); var icon = $('.pv-action-icon', btn); if (icon) icon.innerHTML = iconHeart(!!item.viewer.liked); var count = $('span:last-child', btn); if (count) count.textContent = formatCount(item.counts.likes);
   }
-  function followStore() { return safeJsonGet('pv-follow-state', {}); }
+  function followStoreKey() { return 'pv-follow-state:' + localUserSuffix(); }
+  function followStore() { return safeJsonGet(followStoreKey(), {}); }
   function readFollow(author) { if (!author) return false; var s = followStore(); if (author.uid && s['uid:' + author.uid] !== undefined) return !!s['uid:' + author.uid]; if (author.userslug && s['slug:' + String(author.userslug).toLowerCase()] !== undefined) return !!s['slug:' + String(author.userslug).toLowerCase()]; return false; }
-  function writeFollow(author, following) { var s = followStore(); if (author.uid) s['uid:' + author.uid] = !!following; if (author.userslug) s['slug:' + String(author.userslug).toLowerCase()] = !!following; safeJsonSet('pv-follow-state', s); }
+  function writeFollow(author, following) { var s = followStore(); if (author.uid) s['uid:' + author.uid] = !!following; if (author.userslug) s['slug:' + String(author.userslug).toLowerCase()] = !!following; safeJsonSet(followStoreKey(), s); }
   function toggleFollow(item, slide) {
     if (!isLoggedIn()) return alertError(TEXT.loginFirst);
     var author = item.author || {}; if (!author.uid) return alertError(TEXT.followFail);
@@ -740,7 +759,7 @@
     var panel = $('.pv-translate-panel', state.root); var backdrop = $('.pv-modal-backdrop', state.root); var s = getTranslateSettings();
     $('[name="sourceLang"]', panel).value = s.sourceLang || 'auto'; $('[name="targetLang"]', panel).value = s.targetLang || 'zh'; $('[name="provider"]', panel).value = s.provider || 'google';
     $('[name="aiEndpoint"]', panel).value = s.aiEndpoint || ''; $('[name="aiModel"]', panel).value = s.aiModel || ''; $('[name="aiApiKey"]', panel).value = s.aiApiKey || ''; $('[name="aiPrompt"]', panel).value = s.aiPrompt || DEFAULT_AI_PROMPT;
-    panel.classList.toggle('is-ai', s.provider === 'ai');
+    panel.classList.toggle('is-ai', s.provider === 'ai'); $$('.pv-provider-tab', panel).forEach(function(t){ t.classList.toggle('is-active', (t.dataset.provider || 'google') === (s.provider || 'google')); });
     panel.classList.add('is-open'); backdrop.classList.add('is-open');
   }
   function closeTranslateSettings() { $('.pv-translate-panel', state.root).classList.remove('is-open'); $('.pv-modal-backdrop', state.root).classList.remove('is-open'); }
@@ -798,7 +817,7 @@
     $('.pv-drawer-backdrop', state.root).classList.add('is-open'); panel.classList.add('is-open'); panel.style.transform = '';
     $('.pv-comments-title', panel).textContent = TEXT.comments + ' ' + formatCount(item.counts.comments);
     $('.pv-comments-list', panel).innerHTML = '<div class="pv-meta">加载中...</div>';
-    $('.pv-comment-input', panel).placeholder = TEXT.commentPlaceholder;
+    $('.pv-comment-input', panel).placeholder = TEXT.commentPlaceholder; updateCommentActionButton();
     $('.pv-reply-bar', panel).classList.remove('is-open');
     apiFetch('/api/topic/' + encodeURIComponent(item.tid)).then(function (json) {
       var posts = Array.isArray(json.posts) ? json.posts.slice(1) : [];
@@ -816,7 +835,7 @@
       var avatar = user.picture ? '<img src="' + escapeHtml(user.picture) + '" alt="avatar">' : '<img alt="avatar">';
       var pid = String(post.pid || '');
       var audioHtml = audios.map(function (a) { return renderVoiceCard(a, ''); }).join('');
-      return '<div class="pv-comment" data-pid="' + escapeHtml(pid) + '" data-username="' + escapeHtml(user.username || '用户') + '">' + avatar + '<div class="pv-comment-body"><div class="pv-comment-name">' + escapeHtml(user.username || '用户') + '</div>' + (text ? '<div class="pv-comment-text">' + escapeHtml(text) + '</div>' : '') + audioHtml + '<div class="pv-comment-translated"></div><div class="pv-comment-actions"><button type="button" class="pv-comment-reply">' + TEXT.replyTo + '</button><button type="button" class="pv-comment-translate">' + TEXT.translate + '</button></div></div></div>';
+      return '<div class="pv-comment" data-pid="' + escapeHtml(pid) + '" data-username="' + escapeHtml(user.username || '用户') + '">' + avatar + '<div class="pv-comment-body"><div class="pv-comment-name">' + escapeHtml(user.username || '用户') + '</div>' + (text ? '<div class="pv-comment-text">' + escapeHtml(text) + '</div>' : '') + audioHtml + '<div class="pv-comment-translated"></div><div class="pv-comment-actions"><button type="button" class="pv-comment-reply">' + TEXT.replyTo + '</button><button type="button" class="pv-comment-translate" aria-label="' + TEXT.translate + '" title="' + TEXT.translate + '">' + iconTranslate() + '</button></div></div></div>';
     }).join('');
   }
   function normalizeAuthor(user, fallback) {
@@ -835,7 +854,7 @@
     $('.pv-comment-input', panel).placeholder = TEXT.replyTo + ' @' + username;
     $('.pv-comment-input', panel).focus();
   }
-  function clearReplyTarget() { state.comments.replyTo = null; var panel = $('.pv-comments-panel', state.root); $('.pv-reply-bar', panel).classList.remove('is-open'); $('.pv-comment-input', panel).placeholder = TEXT.commentPlaceholder; }
+  function clearReplyTarget() { state.comments.replyTo = null; var panel = $('.pv-comments-panel', state.root); $('.pv-reply-bar', panel).classList.remove('is-open'); $('.pv-comment-input', panel).placeholder = TEXT.commentPlaceholder; updateCommentActionButton(); }
   function setCommentVoice(blob, duration) {
     if (state.comments.voiceUrl) { try { URL.revokeObjectURL(state.comments.voiceUrl); } catch (e) {} }
     state.comments.voiceBlob = blob || null;
@@ -843,7 +862,7 @@
     state.comments.voiceUrl = blob ? URL.createObjectURL(blob) : '';
     var wrap = $('.pv-comment-voice-preview', state.root);
     if (!wrap) return;
-    wrap.innerHTML = blob ? renderVoiceCard({ url: state.comments.voiceUrl }, 'is-preview') + '<button type="button" class="pv-comment-voice-remove">×</button>' : '';
+    wrap.innerHTML = blob ? renderVoiceCard({ url: state.comments.voiceUrl }, 'is-preview') + '<button type="button" class="pv-comment-voice-remove">×</button>' : ''; wrap.classList.toggle('is-open', !!blob); updateCommentActionButton();
     wrap.classList.toggle('is-open', !!blob);
   }
   function toggleCommentRecording() {
@@ -854,11 +873,13 @@
       state.comments.stream = stream; state.comments.chunks = []; state.comments.startAt = Date.now();
       var mime = recorderMime(); var rec = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 16000 } : { audioBitsPerSecond: 16000 }); state.comments.mediaRecorder = rec;
       rec.ondataavailable = function (e) { if (e.data && e.data.size) state.comments.chunks.push(e.data); };
-      rec.onstop = function () { var dur = Math.max(1, Math.round((Date.now() - state.comments.startAt) / 1000)); if (state.comments.stream) state.comments.stream.getTracks().forEach(function (t) { t.stop(); }); clearInterval(state.comments.timer); btn.classList.remove('recording'); btn.textContent = '🎙'; if (state.comments.chunks.length) setCommentVoice(new Blob(state.comments.chunks, { type: state.comments.chunks[0].type || mime || 'audio/webm' }), dur); };
-      rec.start(250); btn.classList.add('recording'); btn.textContent = '■'; state.comments.timer = setInterval(function () {}, 500);
+      rec.onstop = function () { var dur = Math.max(1, Math.round((Date.now() - state.comments.startAt) / 1000)); if (state.comments.stream) state.comments.stream.getTracks().forEach(function (t) { t.stop(); }); clearInterval(state.comments.timer); btn.classList.remove('recording'); $('.pv-comment-record-panel', state.root).classList.remove('is-open'); updateCommentActionButton(); if (state.comments.chunks.length) setCommentVoice(new Blob(state.comments.chunks, { type: state.comments.chunks[0].type || mime || 'audio/webm' }), dur); };
+      rec.start(250); btn.classList.add('recording'); $('.pv-comment-record-panel', state.root).classList.add('is-open'); state.comments.timer = setInterval(function () { var sec = Math.max(0, Math.floor((Date.now() - state.comments.startAt) / 1000)); var el = $('.pv-record-time', state.root); if (el) el.textContent = formatDuration(sec); }, 250);
     }).catch(function () { alertError('麦克风权限未开启'); });
   }
-  function stopCommentRecording() { var rec = state.comments.mediaRecorder; if (rec && rec.state === 'recording') { try { rec.stop(); } catch (e) {} } if (state.comments.stream) state.comments.stream.getTracks().forEach(function (t) { t.stop(); }); clearInterval(state.comments.timer); }
+  function stopCommentRecording() { var rec = state.comments.mediaRecorder; if (rec && rec.state === 'recording') { try { rec.stop(); } catch (e) {} } if (state.comments.stream) state.comments.stream.getTracks().forEach(function (t) { t.stop(); }); clearInterval(state.comments.timer); var panel = $('.pv-comment-record-panel', state.root); if (panel) panel.classList.remove('is-open'); updateCommentActionButton(); }
+  function updateCommentActionButton() { var btn = $('.pv-comment-action-btn', state.root); if (!btn) return; var input = $('.pv-comment-input', state.root); var hasText = !!norm(input && input.value); var recording = state.comments.mediaRecorder && state.comments.mediaRecorder.state === 'recording'; var hasVoice = !!state.comments.voiceBlob; btn.classList.toggle('is-send', hasText || hasVoice); btn.classList.toggle('recording', !!recording); btn.innerHTML = (hasText || hasVoice) ? iconSend() : (recording ? '<span class="pv-stop-dot"></span>' : iconMic()); }
+  function handleCommentAction() { var input = $('.pv-comment-input', state.root); if ((input && norm(input.value)) || state.comments.voiceBlob) submitComment(); else toggleCommentRecording(); }
 
   function submitComment() {
     var item = state.comments.item; var input = $('.pv-comment-input', state.root); var text = norm(input.value);
@@ -874,7 +895,7 @@
       var payload = { content: content };
       if (state.comments.replyTo && state.comments.replyTo.pid) payload.toPid = state.comments.replyTo.pid;
       return apiFetch('/api/v3/topics/' + encodeURIComponent(item.tid), { method: 'POST', headers: { 'content-type': 'application/json; charset=utf-8', 'x-csrf-token': csrfToken() }, body: JSON.stringify(payload) });
-    }).then(function () { input.value = ''; clearReplyTarget(); setCommentVoice(null, 0); item.counts.comments += 1; updateCountUi(item); openComments(item); })
+    }).then(function () { input.value = ''; clearReplyTarget(); setCommentVoice(null, 0); updateCommentActionButton(); item.counts.comments += 1; updateCountUi(item); openComments(item); })
       .catch(function () { alertError(TEXT.commentFail); window.open(item.href, '_blank'); })
       .finally(function () { btn.disabled = false; });
   }
@@ -887,6 +908,36 @@
   function openCompose() { pauseSlide(state.index); $('.pv-drawer-backdrop', state.root).classList.add('is-open'); $('.pv-compose-panel', state.root).classList.add('is-open'); hideComposerFab(); }
   function closeCompose() { $('.pv-compose-panel', state.root).classList.remove('is-open'); $('.pv-drawer-backdrop', state.root).classList.remove('is-open'); }
   function resetCompose() { var p = $('.pv-compose-panel', state.root); $('textarea', p).value = ''; setPendingImages([]); setPendingVoice(null, 0); $('.pv-meta', p).textContent = ''; }
+
+  function canCanvasEncode(type) {
+    return new Promise(function (resolve) {
+      try { var c = document.createElement('canvas'); c.width = c.height = 1; c.toBlob(function (b) { resolve(!!b && b.type === type); }, type, 0.8); } catch (e) { resolve(false); }
+    });
+  }
+  function compressImageFile(file) {
+    if (!file || !/^image\//i.test(file.type) || /gif|svg/i.test(file.type) || file.size < 128 * 1024) return Promise.resolve(file);
+    return new Promise(function (resolve) {
+      var img = new Image(); var url = URL.createObjectURL(file);
+      img.onload = function () {
+        URL.revokeObjectURL(url);
+        var maxSide = 1440; var scale = Math.min(1, maxSide / Math.max(img.naturalWidth || img.width, img.naturalHeight || img.height));
+        var canvas = document.createElement('canvas'); canvas.width = Math.max(1, Math.round((img.naturalWidth || img.width) * scale)); canvas.height = Math.max(1, Math.round((img.naturalHeight || img.height) * scale));
+        var ctx = canvas.getContext('2d'); if (!ctx || !canvas.toBlob) return resolve(file);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        canCanvasEncode('image/webp').then(function (webp) {
+          var type = webp ? 'image/webp' : 'image/jpeg';
+          canvas.toBlob(function (blob) {
+            if (!blob || blob.size >= file.size * 0.95) return resolve(file);
+            var name = String(file.name || ('image-' + Date.now())).replace(/\.[^.]+$/, '') + (type === 'image/webp' ? '.webp' : '.jpg');
+            resolve(new File([blob], name, { type: type, lastModified: Date.now() }));
+          }, type, 0.62);
+        });
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); resolve(file); };
+      img.src = url;
+    });
+  }
+  function compressImageFiles(files) { return Promise.all((files || []).map(compressImageFile)); }
   function setPendingImages(files) {
     state.compose.imageUrls.forEach(function (url) { URL.revokeObjectURL(url); });
     var list = Array.from(files || []).filter(function (f) { return /^image\//i.test(f.type); }).slice(0, CONFIG.imageMax);
@@ -932,7 +983,7 @@
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) return alertError('当前浏览器不支持录音');
     navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
       state.compose.stream = stream; state.compose.chunks = []; state.compose.startAt = Date.now();
-      var mime = recorderMime(); var rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined); state.compose.mediaRecorder = rec;
+      var mime = recorderMime(); var rec = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 16000 } : { audioBitsPerSecond: 16000 }); state.compose.mediaRecorder = rec;
       rec.ondataavailable = function (e) { if (e.data && e.data.size) state.compose.chunks.push(e.data); };
       rec.onstop = function () { var dur = Math.max(1, Math.round((Date.now() - state.compose.startAt) / 1000)); if (state.compose.stream) state.compose.stream.getTracks().forEach(function (t) { t.stop(); }); clearInterval(state.compose.timer); btn.textContent = TEXT.record; if (state.compose.chunks.length) setPendingVoice(new Blob(state.compose.chunks, { type: state.compose.chunks[0].type || mime || 'audio/webm' }), dur); };
       rec.start(250); btn.textContent = TEXT.stop; state.compose.timer = setInterval(function () { $('.pv-compose-panel .pv-meta', state.root).textContent = TEXT.voiceMsg + ' ' + formatDuration(Math.floor((Date.now() - state.compose.startAt) / 1000)); }, 250);
@@ -947,8 +998,8 @@
         '<button type="button" class="pv-compose-fab">+</button>' +
         '<div class="pv-drawer-backdrop"></div><div class="pv-modal-backdrop"></div>' +
         '<section class="pv-compose-panel" role="dialog"><div class="pv-panel-head"><div class="pv-panel-title">' + TEXT.publish + '</div><button type="button" class="pv-close pv-compose-close">×</button></div><textarea placeholder="' + TEXT.placeholder + '"></textarea><div class="pv-preview-images"></div><div class="pv-compose-tools"><input type="file" class="pv-image-input" accept="image/*" multiple hidden><button type="button" class="pv-tool pv-image-btn">' + TEXT.chooseImage + '</button><button type="button" class="pv-tool pv-record-btn">' + TEXT.record + '</button><button type="button" class="pv-primary pv-compose-submit">' + TEXT.send + '</button></div><div class="pv-meta"></div></section>' +
-        '<section class="pv-comments-panel" role="dialog"><div class="pv-panel-grip"></div><div class="pv-panel-head pv-comments-drag"><div class="pv-panel-title pv-comments-title">' + TEXT.comments + '</div><button type="button" class="pv-close pv-comments-close">×</button></div><div class="pv-comments-list"></div><div class="pv-reply-bar"><span>' + TEXT.replyTo + ' </span><b class="pv-reply-name"></b><button type="button" class="pv-reply-cancel">×</button></div><div class="pv-comment-voice-preview"></div><div class="pv-comment-send-row"><button type="button" class="pv-comment-voice-btn">🎙</button><button type="button" class="pv-comment-input-translate">译</button><input class="pv-comment-input" placeholder="' + TEXT.commentPlaceholder + '"><button type="button" class="pv-comment-submit">➤</button></div></section>' +
-        '<section class="pv-translate-panel" role="dialog"><div class="pv-panel-head"><div class="pv-panel-title">' + TEXT.translateSettings + '</div><button type="button" class="pv-close pv-translate-close">×</button></div><label>' + TEXT.provider + '<select name="provider"><option value="google">' + TEXT.google + '</option><option value="ai">' + TEXT.ai + '</option></select></label><label>' + TEXT.sourceLang + '<select name="sourceLang">' + langOptions(true) + '</select></label><label>' + TEXT.targetLang + '<select name="targetLang">' + langOptions(false) + '</select></label><div class="pv-ai-settings"><label>' + TEXT.aiEndpoint + '<input name="aiEndpoint" placeholder="https://api.example.com/v1"></label><label>' + TEXT.aiModel + '<input name="aiModel" placeholder="gpt-4.1-mini / qwen / deepseek"></label><label>' + TEXT.aiApiKey + '<input name="aiApiKey" type="password" placeholder="API Key"></label><label>' + TEXT.aiPrompt + '<textarea name="aiPrompt" rows="4"></textarea></label></div><div class="pv-translate-actions"><button type="button" class="pv-primary pv-translate-save">' + TEXT.save + '</button></div></section>' +
+        '<section class="pv-comments-panel" role="dialog"><div class="pv-panel-grip"></div><div class="pv-panel-head pv-comments-drag"><div class="pv-panel-title pv-comments-title">' + TEXT.comments + '</div><button type="button" class="pv-close pv-comments-close">×</button></div><div class="pv-comments-list"></div><div class="pv-reply-bar"><span>' + TEXT.replyTo + ' </span><b class="pv-reply-name"></b><button type="button" class="pv-reply-cancel">×</button></div><div class="pv-comment-voice-preview"></div><div class="pv-comment-record-panel"><div class="pv-record-pulse"></div><div class="pv-record-bars"><i></i><i></i><i></i><i></i><i></i></div><span class="pv-record-time">00:00</span><span class="pv-record-tip">松开后可试听发送</span></div><div class="pv-comment-send-row"><button type="button" class="pv-comment-input-translate" aria-label="' + TEXT.translate + '" title="' + TEXT.translate + '">' + iconTranslate() + '</button><input class="pv-comment-input" placeholder="' + TEXT.commentPlaceholder + '"><button type="button" class="pv-comment-action-btn" aria-label="语音或发送">' + iconMic() + '</button></div></section>' +
+        '<section class="pv-translate-panel" role="dialog"><div class="pv-panel-head"><div class="pv-panel-title">' + TEXT.translateSettings + '</div><button type="button" class="pv-close pv-translate-close">×</button></div><div class="pv-provider-tabs"><button type="button" class="pv-provider-tab" data-provider="google">' + TEXT.google + '</button><button type="button" class="pv-provider-tab" data-provider="ai">' + TEXT.ai + '</button><input type="hidden" name="provider" value="google"></div><div class="pv-lang-row"><label><span>' + TEXT.sourceLang + '</span><select name="sourceLang">' + langOptions(true) + '</select></label><span class="pv-lang-arrow">⇄</span><label><span>' + TEXT.targetLang + '</span><select name="targetLang">' + langOptions(false) + '</select></label></div><div class="pv-ai-settings"><label>' + TEXT.aiEndpoint + '<input name="aiEndpoint" placeholder="https://api.example.com/v1"></label><label>' + TEXT.aiModel + '<input name="aiModel" placeholder="gpt-4.1-mini / qwen / deepseek"></label><label>' + TEXT.aiApiKey + '<input name="aiApiKey" type="password" placeholder="API Key"></label><label>' + TEXT.aiPrompt + '<textarea name="aiPrompt" rows="4"></textarea></label></div><div class="pv-translate-actions"><button type="button" class="pv-primary pv-translate-save">' + TEXT.save + '</button></div></section>' +
         '<div class="pv-viewer"><div class="pv-viewer-swiper swiper"><div class="swiper-wrapper"></div><div class="pv-viewer-pagination"></div></div><button class="pv-viewer-close" aria-label="关闭">×</button></div>' +
       '</div>';
     bindChrome();
@@ -972,21 +1023,21 @@
     $('.pv-compose-close', state.root).addEventListener('click', closeCompose);
     $('.pv-drawer-backdrop', state.root).addEventListener('click', function () { closeCompose(); closeComments(); });
     $('.pv-image-btn', state.root).addEventListener('click', function () { $('.pv-image-input', state.root).click(); });
-    $('.pv-image-input', state.root).addEventListener('change', function (e) { var files = Array.from(e.target.files || []).slice(0, CONFIG.imageMax); e.target.value = ''; if (files.find(function (f) { return !/^image\//i.test(f.type); })) return alertError(TEXT.imageOnly); setPendingImages(files); });
+    $('.pv-image-input', state.root).addEventListener('change', function (e) { var files = Array.from(e.target.files || []).slice(0, CONFIG.imageMax); e.target.value = ''; if (files.find(function (f) { return !/^image\//i.test(f.type); })) return alertError(TEXT.imageOnly); compressImageFiles(files).then(setPendingImages); });
     $('.pv-record-btn', state.root).addEventListener('click', toggleRecording);
     $('.pv-compose-submit', state.root).addEventListener('click', sendTopic);
     $('.pv-comments-close', state.root).addEventListener('click', closeComments);
     $('.pv-reply-cancel', state.root).addEventListener('click', clearReplyTarget);
-    $('.pv-comment-submit', state.root).addEventListener('click', submitComment);
-    $('.pv-comment-voice-btn', state.root).addEventListener('click', toggleCommentRecording);
+    $('.pv-comment-action-btn', state.root).addEventListener('click', handleCommentAction);
     $('.pv-comment-voice-preview', state.root).addEventListener('click', function (e) { var rm = e.target.closest('.pv-comment-voice-remove'); if (rm) { setCommentVoice(null, 0); return; } var card = e.target.closest('.pv-voice-card'); if (card) toggleVoiceCard(card); });
     $('.pv-comment-input-translate', state.root).addEventListener('click', translateCommentInput);
     bindLongPress($('.pv-comment-input-translate', state.root), openTranslateSettings);
+    $('.pv-comment-input', state.root).addEventListener('input', updateCommentActionButton);
     $('.pv-comment-input', state.root).addEventListener('keydown', function (e) { if (e.key === 'Enter') submitComment(); });
     $('.pv-translate-close', state.root).addEventListener('click', closeTranslateSettings);
     $('.pv-modal-backdrop', state.root).addEventListener('click', closeTranslateSettings);
     $('.pv-translate-save', state.root).addEventListener('click', function () { var p = $('.pv-translate-panel', state.root); safeJsonSet('pv-translate-settings', { provider: $('[name="provider"]', p).value, sourceLang: $('[name="sourceLang"]', p).value, targetLang: $('[name="targetLang"]', p).value, aiEndpoint: $('[name="aiEndpoint"]', p).value, aiModel: $('[name="aiModel"]', p).value, aiApiKey: $('[name="aiApiKey"]', p).value, aiPrompt: $('[name="aiPrompt"]', p).value }); closeTranslateSettings(); });
-    $('[name="provider"]', $('.pv-translate-panel', state.root)).addEventListener('change', function () { $('.pv-translate-panel', state.root).classList.toggle('is-ai', this.value === 'ai'); });
+    $$('.pv-provider-tab', state.root).forEach(function(tab){ tab.addEventListener('click', function(){ var p = $('.pv-translate-panel', state.root); $('[name="provider"]', p).value = tab.dataset.provider || 'google'; $$('.pv-provider-tab', p).forEach(function(t){ t.classList.toggle('is-active', t === tab); }); p.classList.toggle('is-ai', tab.dataset.provider === 'ai'); }); });
     var viewer = $('.pv-viewer', state.root);
     $('.pv-viewer-close', viewer).addEventListener('click', closeViewer);
     viewer.addEventListener('pointerdown', function (e) { state.viewer.down = true; state.viewer.startX = e.clientX; state.viewer.startY = e.clientY; });
@@ -1014,7 +1065,7 @@
     var panel = $('.pv-comments-panel', state.root);
     if (panel && panel.classList.contains('is-open') && e.target.closest('.pv-comments-panel') && !e.target.closest('input,button,.pv-voice-card')) {
       var rect = panel.getBoundingClientRect(); var list = e.target.closest('.pv-comments-list');
-      state.comments.dragCandidate = true; state.comments.dragStartTopZone = (e.clientY - rect.top) < 78 || (list && list.scrollTop <= 0); state.comments.dragStartY = e.clientY; state.comments.dragY = 0;
+      state.comments.dragCandidate = true; state.comments.dragStartTopZone = true; state.comments.dragStartY = e.clientY; state.comments.dragY = 0;
     }
   }
   function onRootPointerMove(e) {
