@@ -253,7 +253,13 @@ async function getViewer(uid, item) {
 async function getTids(cid, start, stop) {
   await ensureModules();
   if (!db || typeof db.getSortedSetRevRange !== 'function') return [];
-  const tids = await db.getSortedSetRevRange(`cid:${cid}:tids`, start, stop);
+
+  // Use the creation-time sorted set so comments/replies do not bump old videos to the top.
+  // NodeBB also maintains cid:{cid}:tids for active/bumped sorting on many installs; that is only a fallback here.
+  let tids = await db.getSortedSetRevRange(`cid:${cid}:tids:create`, start, stop);
+  if (!tids || !tids.length) {
+    tids = await db.getSortedSetRevRange(`cid:${cid}:tids`, start, stop);
+  }
   return (tids || []).map(String).filter(Boolean);
 }
 async function getFeed(uid, page, pageSize) {
