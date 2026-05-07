@@ -3,7 +3,7 @@
   "url": "https://peipe.local/nodebb-plugin-peipe-video",
   "name": "Peipe Video Discover",
   "description": "Official NodeBB-style /video discover page with cached cid 6 feed aggregation.",
-  "version": "0.2.0",
+  "version": "0.6.0",
   "library": "./library.js",
   "staticDirs": {
     "static": "./static"
@@ -18,6 +18,26 @@
     {
       "hook": "static:api.routes",
       "method": "addRoutes"
+    },
+    {
+      "hook": "action:topic.save",
+      "method": "clearCaches"
+    },
+    {
+      "hook": "action:topic.delete",
+      "method": "clearCaches"
+    },
+    {
+      "hook": "action:post.save",
+      "method": "clearCaches"
+    },
+    {
+      "hook": "action:post.delete",
+      "method": "clearCaches"
+    },
+    {
+      "hook": "action:post.vote",
+      "method": "clearCaches"
     }
   ],
   "nbbpm": {
