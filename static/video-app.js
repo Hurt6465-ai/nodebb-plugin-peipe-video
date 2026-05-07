@@ -1,4 +1,4 @@
-/* Peipe /video mobile discover page v3
+/* Peipe /video mobile discover page v4
    - Independent /video page, official NodeBB plugin backend feed only
    - Swiper vertical feed with virtual slides
    - TikTok official embed keeps official audio controls; no custom center play button
@@ -8,8 +8,8 @@
 (function () {
   'use strict';
 
-  if (window.__peipeVideoDiscoverV3) return;
-  window.__peipeVideoDiscoverV3 = true;
+  if (window.__peipeVideoDiscoverV4) return;
+  window.__peipeVideoDiscoverV4 = true;
 
   var CONFIG = Object.assign({
     cid: 6,
@@ -19,8 +19,8 @@
     coverCacheMs: 7 * 24 * 60 * 60 * 1000,
     translateCacheMs: 3 * 24 * 60 * 60 * 1000,
     doubleTapMs: 280,
-    swiperCdnJs: 'https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.js',
-    swiperCdnCss: 'https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.css'
+    swiperCdnJs: '/plugins/nodebb-plugin-peipe-video/static/lib/swiper-bundle.min.js',
+    swiperCdnCss: '/plugins/nodebb-plugin-peipe-video/static/lib/swiper-bundle.min.css'
   }, window.PEIPE_VIDEO_CONFIG || {});
 
   var TEXT = {
@@ -95,7 +95,9 @@
       startAt: 0,
       timer: 0
     },
-    viewer: { images: [], index: 0, startX: 0, startY: 0, down: false },
+    viewer: { images: [], index: 0, swiper: null, startX: 0, startY: 0, down: false },
+    imageSwipers: new Map(),
+    soundUnlocked: false,
     comments: { item: null, posts: [], loading: false, replyTo: null, dragY: 0, dragStartY: 0, dragging: false },
     translateLongPressTimer: 0
   };
@@ -180,7 +182,7 @@
   }
   function isAutoText(text) {
     var clean = norm(String(text || '').replace(/[•・·|｜_／/\\-]+/g, ' '));
-    return !clean || /^(?:新动态|图片分享|图片动态|语音消息|语音动态|voice message|audio message|image|photo|picture)$/i.test(clean);
+    return !clean || /^(?:新动态|图片分享|图片动态|语音消息|语音动态|voice message|audio message|image|photo|picture)(?:\s*:??\s*\d{1,2}:\d{2}(?::\d{2})?)?$/i.test(clean);
   }
   function displayText(item) {
     return cleanDisplayText(item && (item.text || item.title || ''));
@@ -218,6 +220,7 @@
       }
       var el = document.createElement(tag);
       el.dataset.pvSwiper = '1';
+      url = rel(url);
       if (tag === 'link') { el.rel = 'stylesheet'; el.href = url; }
       else { el.src = url; el.async = true; }
       el.onload = resolve; el.onerror = reject;
@@ -269,10 +272,10 @@
     state.swiper = new window.Swiper(el, {
       direction: 'vertical',
       slidesPerView: 1,
-      speed: 280,
-      threshold: 4,
+      speed: 240,
+      threshold: 3,
       resistanceRatio: 0.38,
-      longSwipesRatio: 0.16,
+      longSwipesRatio: 0.12,
       followFinger: true,
       watchSlidesProgress: true,
       preventClicks: false,
@@ -281,7 +284,7 @@
       virtual: {
         enabled: true,
         addSlidesBefore: 2,
-        addSlidesAfter: 3,
+        addSlidesAfter: 4,
         slides: state.list.map(renderSlideHtml)
       },
       on: {
@@ -300,6 +303,7 @@
           state.index = swiper.activeIndex || 0;
           if (state.index >= state.list.length - 4) loadFeed(false);
           afterVirtualUpdate();
+          pauseOtherPlayers(playerKey(state.index, (state.list[state.index] && state.list[state.index].tiktoks && state.list[state.index].tiktoks[0] && state.list[state.index].tiktoks[0].videoId) || ''));
           activateCurrent(false);
         },
         virtualUpdate: function () { afterVirtualUpdate(); },
@@ -325,6 +329,7 @@
       slide.classList.toggle('is-active', index === state.index);
       prepareSlide(index, false);
     });
+    initImageSwipers();
   }
 
   function renderSlideHtml(item, index) {
@@ -360,17 +365,19 @@
           '<div class="pv-avatar-wrap"><a href="' + authorHref(author) + '">' + avatarHtml + '</a>' +
           (author.uid && !isOwnAuthor(author) ? '<button type="button" class="pv-follow-plus ' + (following ? 'is-following' : '') + '" data-index="' + index + '">' + (following ? '✓' : '+') + '</button>' : '') + '</div>' +
           '<button type="button" class="pv-action pv-like ' + (liked ? 'is-active' : '') + '" data-index="' + index + '"><span class="pv-action-icon">' + iconHeart(liked) + '</span><span>' + formatCount(item.counts.likes) + '</span></button>' +
-          '<button type="button" class="pv-action pv-comment-btn" data-index="' + index + '"><span class="pv-action-icon">💬</span><span>' + formatCount(item.counts.comments) + '</span></button>' +
+          '<button type="button" class="pv-action pv-comment-btn" data-index="' + index + '"><span class="pv-action-icon">' + iconComment() + '</span><span>' + formatCount(item.counts.comments) + '</span></button>' +
+          (images.length && hasVideo ? '<button type="button" class="pv-action pv-album-btn" data-index="' + index + '"><span class="pv-action-icon">' + iconPhoto() + '</span><span>' + images.length + '</span></button>' : '') +
         '</div>' +
         '<div class="pv-desc">' +
           '<a class="pv-username" href="' + authorHref(author) + '">@' + escapeHtml(author.username || author.userslug || '用户') + '</a>' +
           (hasText ? '<div class="pv-text-row" data-index="' + index + '"><span class="pv-text-main">' + escapeHtml(text) + '</span><button type="button" class="pv-translate-btn" data-index="' + index + '">' + TEXT.translate + '</button></div><div class="pv-translated"></div>' : '') +
           '<div class="pv-time">' + relativeTime(item.createdAt) + '</div>' +
-          (showImagePill ? '<button type="button" class="pv-image-pill" data-index="' + index + '"><img src="' + escapeHtml(images[0]) + '" alt="image"><span>1/' + images.length + '</span></button>' : '') +
         '</div>' +
       '</section>';
   }
-  function iconHeart(active) { return active ? '♥' : '♡'; }
+  function iconHeart(active) { return '<svg viewBox="0 0 48 48" aria-hidden="true"><path d="M24 41s-2.2-1.3-5.2-3.4C10.2 31.4 5 25.8 5 18.6 5 12.7 9.5 8 15.2 8c3.5 0 6.6 1.8 8.8 4.7C26.2 9.8 29.3 8 32.8 8 38.5 8 43 12.7 43 18.6c0 7.2-5.2 12.8-13.8 19C26.2 39.7 24 41 24 41z"></path></svg>'; }
+  function iconComment() { return '<svg viewBox="0 0 48 48" aria-hidden="true"><path d="M9 11.5A17.5 17.5 0 0 1 26.5 6h1A17.5 17.5 0 0 1 45 23.5v.5A17.5 17.5 0 0 1 27.5 41h-1.9c-3.4 0-6.6-.9-9.3-2.5L7.5 41c-.9.3-1.7-.5-1.4-1.4l2.5-8.5A17.2 17.2 0 0 1 9 24v-.5z"></path></svg>'; }
+  function iconPhoto() { return '<svg viewBox="0 0 48 48" aria-hidden="true"><path d="M10 10h28a4 4 0 0 1 4 4v20a4 4 0 0 1-4 4H10a4 4 0 0 1-4-4V14a4 4 0 0 1 4-4zm5 23h18l-6-8-4 5-3-4-5 7zm2-13a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"></path></svg>'; }
   function getImageIndex(item) {
     var key = String(item && (item.tid || item.pid || state.list.indexOf(item)) || '');
     return Math.max(0, Number(state.imageIndex.get(key) || 0));
@@ -382,11 +389,35 @@
   }
   function renderImageMain(item, idx) {
     var images = (item.images || []).slice(0, CONFIG.imageMax);
-    var dots = images.length > 1 ? '<div class="pv-image-dots">' + images.map(function (_, i) { return '<i class="' + (i === idx ? 'is-active' : '') + '"></i>'; }).join('') + '</div>' : '';
-    return '<div class="pv-image-main" data-index="' + state.list.indexOf(item) + '">' +
-      '<img src="' + escapeHtml(images[idx] || images[0] || '') + '" alt="image">' +
-      (images.length > 1 ? '<div class="pv-image-count">' + (idx + 1) + '/' + images.length + '</div><button type="button" class="pv-image-nav pv-image-prev" data-delta="-1"></button><button type="button" class="pv-image-nav pv-image-next" data-delta="1"></button>' + dots : '') +
+    var slideIndex = state.list.indexOf(item);
+    var slides = images.map(function (src, i) {
+      return '<div class="swiper-slide pv-image-swiper-slide"><img src="' + escapeHtml(src) + '" alt="image ' + (i + 1) + '"></div>';
+    }).join('');
+    var dots = images.length > 1 ? '<div class="pv-image-pagination"></div>' : '';
+    return '<div class="pv-image-main" data-index="' + slideIndex + '">' +
+      '<div class="pv-image-swiper swiper" data-index="' + slideIndex + '"><div class="swiper-wrapper">' + slides + '</div>' + dots + '</div>' +
       '</div>';
+  }
+  function initImageSwipers() {
+    if (!window.Swiper) return;
+    $$('.pv-image-swiper', state.root).forEach(function (el) {
+      var idx = Number(el.dataset.index || -1);
+      if (state.imageSwipers.has(idx) && state.imageSwipers.get(idx).el === el) return;
+      var item = state.list[idx];
+      if (!item || !(item.images && item.images.length)) return;
+      var swiper = new window.Swiper(el, {
+        direction: 'horizontal',
+        slidesPerView: 1,
+        speed: 220,
+        nested: true,
+        resistanceRatio: 0.55,
+        threshold: 3,
+        pagination: { el: $('.pv-image-pagination', el), clickable: false },
+        on: { slideChange: function (sw) { setImageIndex(item, sw.activeIndex || 0); } }
+      });
+      if (getImageIndex(item) > 0) swiper.slideTo(getImageIndex(item), 0);
+      state.imageSwipers.set(idx, swiper);
+    });
   }
   function updateImageSlide(index) {
     var item = state.list[index];
@@ -395,6 +426,7 @@
     var media = $('.pv-media', slide);
     if (!media) return;
     media.innerHTML = renderImageMain(item, getImageIndex(item));
+    initImageSwipers();
   }
   function findSlide(index) { return $('.pv-slide-item[data-index="' + index + '"]', state.root); }
 
@@ -434,7 +466,8 @@
     iframe.className = 'pv-tiktok-frame';
     iframe.src = buildPlayerUrl(tk.videoId, !!autoplay);
     iframe.allow = 'autoplay; fullscreen; encrypted-media; picture-in-picture';
-    iframe.loading = index === state.index ? 'eager' : 'lazy';
+    iframe.loading = 'eager';
+    iframe.fetchPriority = index === state.index ? 'high' : 'low';
     iframe.referrerPolicy = 'strict-origin-when-cross-origin';
     iframe.title = 'TikTok Player';
     shell.appendChild(iframe);
@@ -448,7 +481,8 @@
     return player;
   }
   function prepareSlide(index, autoplay) {
-    ensureTikTokPlayer(index, !!autoplay);
+    if (index < 0 || index >= state.list.length) return;
+    ensureTikTokPlayer(index, !!autoplay || (state.soundUnlocked && index === state.index));
   }
   function activateCurrent(first) {
     state.index = state.swiper ? state.swiper.activeIndex : state.index;
@@ -458,7 +492,7 @@
       if (idx !== state.index) pauseSlide(idx);
     });
     for (var i = 0; i <= CONFIG.preloadAhead; i += 1) prepareSlide(state.index + i, i === 0);
-    playSlide(state.index, !first && state.hasInteracted);
+    playSlide(state.index, state.soundUnlocked || (!first && state.hasInteracted));
   }
   function sendToPlayer(iframe, type, value) {
     if (!iframe || !iframe.contentWindow) return;
@@ -475,7 +509,8 @@
     pauseOtherPlayers(player.key);
     var slide = findSlide(index);
     if (slide) slide.classList.add('is-loading');
-    if (userGesture && player.iframe.src.indexOf('autoplay=1') === -1) player.iframe.src = buildPlayerUrl(player.videoId, true);
+    if ((userGesture || state.soundUnlocked) && player.iframe.src.indexOf('autoplay=1') === -1) player.iframe.src = buildPlayerUrl(player.videoId, true);
+    if (userGesture) state.soundUnlocked = true;
     sendToPlayer(player.iframe, 'unMute');
     sendToPlayer(player.iframe, 'play');
     setTimeout(function () { sendToPlayer(player.iframe, 'unMute'); sendToPlayer(player.iframe, 'play'); }, 260);
@@ -485,7 +520,7 @@
     state.players.forEach(function (p) {
       if (p.index !== index) return;
       p.wantPlay = false; p.status = 'paused';
-      if (p.iframe) sendToPlayer(p.iframe, 'pause');
+      if (p.iframe) { sendToPlayer(p.iframe, 'pause'); setTimeout(function(){ sendToPlayer(p.iframe, 'pause'); }, 80); }
     });
     var slide = findSlide(index);
     if (slide) slide.classList.remove('is-playing', 'is-loading');
@@ -494,7 +529,7 @@
     state.players.forEach(function (p, key) {
       if (key === currentKey) return;
       p.wantPlay = false; p.status = 'paused';
-      if (p.iframe) sendToPlayer(p.iframe, 'pause');
+      if (p.iframe) { sendToPlayer(p.iframe, 'pause'); setTimeout(function(){ sendToPlayer(p.iframe, 'pause'); }, 80); }
       var slide = findSlide(p.index);
       if (slide) slide.classList.remove('is-playing', 'is-loading');
     });
@@ -523,7 +558,7 @@
       }
       if (data.type === 'onStateChange') {
         var value = Number(data.value); var word = String(data.value || '').toLowerCase();
-        if (value === 1 || word === 'playing') { player.status = 'playing'; pauseOtherPlayers(player.key); markSlidePlaying(player.index); }
+        if (value === 1 || word === 'playing') { player.status = 'playing'; state.soundUnlocked = true; pauseOtherPlayers(player.key); markSlidePlaying(player.index); }
         else if (value === 2 || value === 0 || word === 'paused' || word === 'ended') { player.status = 'paused'; var s = findSlide(player.index); if (s) s.classList.remove('is-playing', 'is-loading'); }
         else if (value === 3 || word === 'buffering') { var s2 = findSlide(player.index); if (s2 && player.wantPlay) s2.classList.add('is-loading'); }
       }
@@ -633,10 +668,31 @@
   }
   function closeTranslateSettings() { $('.pv-translate-panel', state.root).classList.remove('is-open'); $('.pv-modal-backdrop', state.root).classList.remove('is-open'); }
 
-  function openViewer(images, index) { if (!images || !images.length) return; state.viewer.images = images.slice(0, CONFIG.imageMax); state.viewer.index = Math.max(0, Math.min(state.viewer.images.length - 1, Number(index || 0))); $('.pv-viewer', state.root).classList.add('is-open'); updateViewer(); }
-  function updateViewer() { var viewer = $('.pv-viewer', state.root); $('.pv-viewer-img', viewer).src = state.viewer.images[state.viewer.index] || ''; $('.pv-viewer-count', viewer).textContent = (state.viewer.index + 1) + '/' + state.viewer.images.length; }
+  function openViewer(images, index) {
+    if (!images || !images.length) return;
+    state.viewer.images = images.slice(0, CONFIG.imageMax);
+    state.viewer.index = Math.max(0, Math.min(state.viewer.images.length - 1, Number(index || 0)));
+    var viewer = $('.pv-viewer', state.root);
+    viewer.classList.add('is-open');
+    updateViewer();
+  }
+  function updateViewer() {
+    var viewer = $('.pv-viewer', state.root);
+    var wrapper = $('.pv-viewer .swiper-wrapper', state.root);
+    wrapper.innerHTML = state.viewer.images.map(function (src, i) {
+      return '<div class="swiper-slide"><img src="' + escapeHtml(src) + '" alt="image ' + (i + 1) + '"></div>';
+    }).join('');
+    if (state.viewer.swiper) { try { state.viewer.swiper.destroy(true, true); } catch (e) {} state.viewer.swiper = null; }
+    if (window.Swiper) {
+      state.viewer.swiper = new window.Swiper($('.pv-viewer-swiper', viewer), {
+        direction: 'horizontal', slidesPerView: 1, speed: 220, initialSlide: state.viewer.index,
+        pagination: { el: $('.pv-viewer-pagination', viewer), clickable: false },
+        on: { slideChange: function (sw) { state.viewer.index = sw.activeIndex || 0; } }
+      });
+    }
+  }
   function closeViewer() { $('.pv-viewer', state.root).classList.remove('is-open'); }
-  function moveViewer(delta) { if (!state.viewer.images.length) return; state.viewer.index = Math.max(0, Math.min(state.viewer.images.length - 1, state.viewer.index + delta)); updateViewer(); }
+  function moveViewer(delta) { if (state.viewer.swiper) state.viewer.swiper.slideTo(Math.max(0, Math.min(state.viewer.images.length - 1, state.viewer.index + delta))); }
 
   function openComments(item) {
     state.comments.item = item; state.comments.replyTo = null;
@@ -764,7 +820,7 @@
         '<section class="pv-compose-panel" role="dialog"><div class="pv-panel-head"><div class="pv-panel-title">' + TEXT.publish + '</div><button type="button" class="pv-close pv-compose-close">×</button></div><textarea placeholder="' + TEXT.placeholder + '"></textarea><div class="pv-preview-images"></div><div class="pv-compose-tools"><input type="file" class="pv-image-input" accept="image/*" multiple hidden><button type="button" class="pv-tool pv-image-btn">' + TEXT.chooseImage + '</button><button type="button" class="pv-tool pv-record-btn">' + TEXT.record + '</button><button type="button" class="pv-primary pv-compose-submit">' + TEXT.send + '</button></div><div class="pv-meta"></div></section>' +
         '<section class="pv-comments-panel" role="dialog"><div class="pv-panel-grip"></div><div class="pv-panel-head pv-comments-drag"><div class="pv-panel-title pv-comments-title">' + TEXT.comments + '</div><button type="button" class="pv-close pv-comments-close">×</button></div><div class="pv-comments-list"></div><div class="pv-reply-bar"><span>' + TEXT.replyTo + ' </span><b class="pv-reply-name"></b><button type="button" class="pv-reply-cancel">×</button></div><div class="pv-comment-send-row"><button type="button" class="pv-comment-input-translate">译</button><input class="pv-comment-input" placeholder="' + TEXT.commentPlaceholder + '"><button type="button" class="pv-comment-submit">➤</button></div></section>' +
         '<section class="pv-translate-panel" role="dialog"><div class="pv-panel-head"><div class="pv-panel-title">' + TEXT.translateSettings + '</div><button type="button" class="pv-close pv-translate-close">×</button></div><label>' + TEXT.sourceLang + '<select name="sourceLang"><option value="auto">' + TEXT.auto + '</option><option value="zh">中文</option><option value="en">English</option><option value="my">မြန်မာ / 缅语</option><option value="th">ไทย</option><option value="vi">Tiếng Việt</option><option value="km">ភាសាខ្មែរ</option><option value="lo">ລາວ</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="ms">Malay</option><option value="tl">Tagalog</option></select></label><label>' + TEXT.targetLang + '<select name="targetLang"><option value="zh">中文</option><option value="en">English</option><option value="my">မြန်မာ / 缅语</option><option value="th">ไทย</option><option value="vi">Tiếng Việt</option><option value="km">ភាសាខ្មែរ</option><option value="lo">ລາວ</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="ms">Malay</option><option value="tl">Tagalog</option></select></label><div class="pv-translate-actions"><button type="button" class="pv-primary pv-translate-save">' + TEXT.save + '</button></div></section>' +
-        '<div class="pv-viewer"><img class="pv-viewer-img" alt="image"><div class="pv-viewer-count">1/1</div><button class="pv-viewer-zone pv-viewer-prev"></button><button class="pv-viewer-zone pv-viewer-next"></button><button class="pv-viewer-close">点击退出</button></div>' +
+        '<div class="pv-viewer"><div class="pv-viewer-swiper swiper"><div class="swiper-wrapper"></div><div class="pv-viewer-pagination"></div></div><button class="pv-viewer-close" aria-label="关闭">×</button></div>' +
       '</div>';
     bindChrome();
   }
@@ -791,11 +847,9 @@
     $('.pv-modal-backdrop', state.root).addEventListener('click', closeTranslateSettings);
     $('.pv-translate-save', state.root).addEventListener('click', function () { var p = $('.pv-translate-panel', state.root); safeJsonSet('pv-translate-settings', { sourceLang: $('[name="sourceLang"]', p).value, targetLang: $('[name="targetLang"]', p).value }); closeTranslateSettings(); });
     var viewer = $('.pv-viewer', state.root);
-    $('.pv-viewer-prev', viewer).addEventListener('click', function (e) { e.stopPropagation(); moveViewer(-1); });
-    $('.pv-viewer-next', viewer).addEventListener('click', function (e) { e.stopPropagation(); moveViewer(1); });
     $('.pv-viewer-close', viewer).addEventListener('click', closeViewer);
     viewer.addEventListener('pointerdown', function (e) { state.viewer.down = true; state.viewer.startX = e.clientX; state.viewer.startY = e.clientY; });
-    viewer.addEventListener('pointerup', function (e) { if (!state.viewer.down) return; state.viewer.down = false; var dx = e.clientX - state.viewer.startX; var dy = e.clientY - state.viewer.startY; if (Math.abs(dx) > 44 && Math.abs(dx) > Math.abs(dy) * 1.1) moveViewer(dx < 0 ? 1 : -1); else if (dy > 66 && Math.abs(dy) > Math.abs(dx)) closeViewer(); });
+    viewer.addEventListener('pointerup', function (e) { if (!state.viewer.down) return; state.viewer.down = false; var dx = e.clientX - state.viewer.startX; var dy = e.clientY - state.viewer.startY; if (dy > 66 && Math.abs(dy) > Math.abs(dx)) closeViewer(); });
     document.addEventListener('visibilitychange', function () { if (document.hidden) pauseSlide(state.index); else activateCurrent(false); });
   }
   function onRootClick(e) {
@@ -804,8 +858,7 @@
     if ((btn = e.target.closest('.pv-comment-btn'))) { e.preventDefault(); e.stopPropagation(); openComments(state.list[Number(btn.dataset.index)]); return; }
     if ((btn = e.target.closest('.pv-follow-plus'))) { e.preventDefault(); e.stopPropagation(); var idx = Number(btn.dataset.index); toggleFollow(state.list[idx], findSlide(idx)); return; }
     if ((btn = e.target.closest('.pv-translate-btn'))) { e.preventDefault(); e.stopPropagation(); var ti = Number(btn.dataset.index); translateSlide(state.list[ti], findSlide(ti)); return; }
-    if ((btn = e.target.closest('.pv-image-pill'))) { e.preventDefault(); e.stopPropagation(); var pi = Number(btn.dataset.index); openViewer(state.list[pi].images || [], 0); return; }
-    if ((btn = e.target.closest('.pv-image-nav'))) { e.preventDefault(); e.stopPropagation(); var slide = e.target.closest('.pv-slide-item'); var ii = Number(slide.dataset.index); var item = state.list[ii]; setImageIndex(item, getImageIndex(item) + Number(btn.dataset.delta)); updateImageSlide(ii); return; }
+    if ((btn = e.target.closest('.pv-album-btn'))) { e.preventDefault(); e.stopPropagation(); var pi = Number(btn.dataset.index); openViewer(state.list[pi].images || [], 0); return; }
     if ((btn = e.target.closest('.pv-comment-reply'))) { e.preventDefault(); e.stopPropagation(); setReplyTarget(e.target.closest('.pv-comment')); return; }
     if ((btn = e.target.closest('.pv-comment-translate'))) { e.preventDefault(); e.stopPropagation(); translateComment(e.target.closest('.pv-comment')); return; }
     if ((btn = e.target.closest('.pv-text-row'))) { if (!e.target.closest('.pv-translate-btn')) btn.classList.toggle('is-expanded'); }
