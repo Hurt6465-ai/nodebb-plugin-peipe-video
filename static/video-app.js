@@ -1,10 +1,10 @@
-/* Peipe /video mobile discover page v9
- * Independent /video page, NodeBB category feed, TikTok official iframe, custom vertical virtual slider.
+/* Peipe /video mobile discover page v10
+ * Independent /video page, NodeBB category feed, TikTok official iframe, Swiper vertical virtual feed.
  */
 (function () {
   'use strict';
-  if (window.__peipeVideoDiscoverV9) return;
-  window.__peipeVideoDiscoverV9 = true;
+  if (window.__peipeVideoDiscoverV10) return;
+  window.__peipeVideoDiscoverV10 = true;
 
   var CONFIG = Object.assign({
     cid: 6,
@@ -18,7 +18,9 @@
     doubleTapMs: 280,
     slideThreshold: 34,
     slideFlickMs: 260,
-    slideFlickDistance: 20
+    slideFlickDistance: 20,
+    swiperCdnJs: '/plugins/nodebb-plugin-peipe-video/static/lib/swiper-bundle.min.js',
+    swiperCdnCss: '/plugins/nodebb-plugin-peipe-video/static/lib/swiper-bundle.min.css'
   }, window.PEIPE_VIDEO_CONFIG || {});
 
   var TEXT = {
@@ -85,6 +87,7 @@
 
   var state = {
     root: null,
+    swiper: null,
     list: [],
     feedPage: 1,
     feedLoading: false,
@@ -220,6 +223,30 @@
       var dns = document.createElement('link'); dns.rel = 'dns-prefetch'; dns.href = href; document.head.appendChild(dns);
     });
   }
+  function loadAsset(tag, url) {
+    return new Promise(function (resolve, reject) {
+      if (tag === 'script' && window.Swiper) return resolve();
+      var existing = document.querySelector(tag + '[data-pv-swiper]');
+      if (existing) {
+        if (tag === 'link') return resolve();
+        existing.addEventListener('load', resolve, { once: true });
+        existing.addEventListener('error', reject, { once: true });
+        return;
+      }
+      var el = document.createElement(tag);
+      el.dataset.pvSwiper = '1';
+      url = rel(url);
+      if (tag === 'link') { el.rel = 'stylesheet'; el.href = url; }
+      else { el.src = url; el.async = true; }
+      el.onload = resolve; el.onerror = reject;
+      document.head.appendChild(el);
+      if (tag === 'link') resolve();
+    });
+  }
+  function ensureSwiper() {
+    if (window.Swiper) return Promise.resolve(true);
+    return loadAsset('link', CONFIG.swiperCdnCss).then(function () { return loadAsset('script', CONFIG.swiperCdnJs); }).then(function () { return !!window.Swiper; });
+  }
 
   function loadFeed(refresh) {
     if (state.feedLoading || (state.feedDone && !refresh)) return Promise.resolve();
@@ -228,7 +255,7 @@
       state.feedPage = 1; state.feedDone = false; state.list = []; state.index = 0;
       state.players.forEach(function (p) { try { p.iframe.remove(); } catch (e) {} });
       state.players.clear();
-      renderWindow();
+      renderWindow(true);
     }
     var page = state.feedPage;
     return apiFetch('/api/v3/plugins/peipe-video/feed?page=' + page + '&pageSize=' + CONFIG.pageSize)
@@ -244,30 +271,88 @@
         state.list = refresh ? items : state.list.concat(items);
         state.feedDone = payload.hasMore === false || !items.length;
         state.feedPage += 1;
-        renderWindow();
+        renderWindow(refresh);
         if (!state.list.length) showEmpty(TEXT.empty);
       })
       .catch(function (err) { console.error('[peipe-video] feed failed', err); showEmpty(err.message || TEXT.empty); })
       .finally(function () { state.feedLoading = false; });
   }
 
-  function renderWindow() {
-    var wrap = $('.pv-slide-list', state.root);
+  function initSwiper() {
+    var el = $('.pv-swiper', state.root);
+    if (!el || !window.Swiper || state.swiper) return !!state.swiper;
+    state.swiper = new window.Swiper(el, {
+      direction: 'vertical',
+      slidesPerView: 1,
+      speed: 280,
+      threshold: 0,
+      touchRatio: 1.15,
+      resistanceRatio: 0.22,
+      longSwipesRatio: 0.08,
+      longSwipesMs: 220,
+      shortSwipes: true,
+      followFinger: true,
+      watchSlidesProgress: true,
+      touchStartPreventDefault: false,
+      touchMoveStopPropagation: false,
+      passiveListeners: false,
+      nested: false,
+      preventClicks: false,
+      preventClicksPropagation: false,
+      virtual: {
+        enabled: true,
+        addSlidesBefore: 2,
+        addSlidesAfter: Math.max(14, CONFIG.preloadAhead + 4),
+        slides: state.list.map(renderSlideHtml)
+      },
+      on: {
+        init: function (swiper) {
+          state.index = swiper.activeIndex || 0;
+          afterRenderWindow();
+          showComposeFabInitial();
+        },
+        touchStart: function () { unlockSoundFromGesture(); },
+        slideChangeTransitionStart: function (swiper) {
+          state.hasInteracted = true;
+          hideComposerFab();
+          if (typeof swiper.previousIndex === 'number') pauseSlide(swiper.previousIndex);
+        },
+        slideChange: function (swiper) {
+          state.index = swiper.activeIndex || 0;
+          if (state.index >= state.list.length - 4) loadFeed(false);
+          pauseOtherPlayers(playerKey(state.index, (state.list[state.index] && state.list[state.index].tiktoks && state.list[state.index].tiktoks[0] && state.list[state.index].tiktoks[0].videoId) || ''));
+          afterRenderWindow();
+        },
+        virtualUpdate: function () { afterRenderWindow(); },
+        reachEnd: function () { loadFeed(false); }
+      }
+    });
+    return true;
+  }
+  function renderWindow(reset) {
+    if (state.swiper && state.swiper.virtual) {
+      state.swiper.virtual.slides = state.list.map(renderSlideHtml);
+      state.swiper.virtual.update(true);
+      if (reset) state.swiper.slideTo(0, 0, false);
+      afterRenderWindow();
+      return;
+    }
+    if (window.Swiper) {
+      initSwiper();
+      if (state.swiper && state.swiper.virtual) {
+        state.swiper.virtual.slides = state.list.map(renderSlideHtml);
+        state.swiper.virtual.update(true);
+        if (reset) state.swiper.slideTo(0, 0, false);
+        afterRenderWindow();
+        return;
+      }
+    }
+    var wrap = $('.pv-swiper .swiper-wrapper', state.root);
     if (!wrap) return;
-    var start = Math.max(0, state.index - 2);
-    var end = Math.min(state.list.length, state.index + 7);
-    var html = [];
-    for (var i = start; i < end; i += 1) html.push(renderSlideHtml(state.list[i], i));
-    wrap.innerHTML = html.join('');
-    applySlideTransform(0, false);
+    wrap.innerHTML = state.list.map(renderSlideHtml).join('');
     afterRenderWindow();
   }
-  function applySlideTransform(offsetPx, animate) {
-    var wrap = $('.pv-slide-list', state.root);
-    if (!wrap) return;
-    wrap.style.transitionDuration = animate ? '260ms' : '0ms';
-    wrap.style.transform = 'translate3d(0, calc(' + (-state.index * 100) + 'dvh + ' + Math.round(offsetPx || 0) + 'px), 0)';
-  }
+  function applySlideTransform() {}
   function afterRenderWindow() {
     $$('.pv-slide-item', state.root).forEach(function (slide) {
       var idx = Number(slide.dataset.index || -1);
@@ -292,7 +377,7 @@
     var following = !!(readFollow(author) || item.viewer.following);
     var liked = !!(readVote(item.pid, item.tid) || item.viewer.liked);
     return '' +
-      '<section class="pv-slide-item ' + (hasVideo ? 'is-video' : 'is-image') + '" data-index="' + index + '" data-tid="' + escapeHtml(item.tid || '') + '" style="transform:translate3d(0,' + (index * 100) + 'dvh,0)">' +
+      '<section class="pv-slide-item swiper-slide ' + (hasVideo ? 'is-video' : 'is-image') + '" data-index="' + index + '" data-tid="' + escapeHtml(item.tid || '') + '">' +
         '<div class="pv-media">' + mediaHtml + '</div>' +
         (hasVideo ? '<div class="pv-cover"><img alt="cover"></div><div class="pv-gesture-layer" data-index="' + index + '"></div>' : '') +
         '<div class="pv-gradient"></div>' +
@@ -323,31 +408,32 @@
   function renderImageMain(item, index) {
     var images = (item.images || []).slice(0, CONFIG.imageMax);
     var slides = images.map(function (src, i) {
-      return '<div class="pv-image-page"><img src="' + escapeHtml(src) + '" alt="image ' + (i + 1) + '"></div>';
+      return '<div class="pv-image-page swiper-slide"><img src="' + escapeHtml(src) + '" alt="image ' + (i + 1) + '"></div>';
     }).join('');
-    var dots = images.length > 1 ? '<div class="pv-image-dots">' + images.map(function (_, i) { return '<i class="' + (i === 0 ? 'is-active' : '') + '"></i>'; }).join('') + '</div>' : '';
-    return '<div class="pv-image-carousel" data-index="' + index + '"><div class="pv-image-track">' + slides + '</div>' + dots + '</div>';
+    var dots = images.length > 1 ? '<div class="pv-image-dots"></div>' : '';
+    return '<div class="pv-image-carousel swiper" data-index="' + index + '"><div class="pv-image-track swiper-wrapper">' + slides + '</div>' + dots + '</div>';
   }
   function initImageCarousels() {
+    if (!window.Swiper) return;
     $$('.pv-image-carousel', state.root).forEach(function (carousel) {
-      if (carousel.dataset.ready) return;
-      carousel.dataset.ready = '1';
-      var track = $('.pv-image-track', carousel);
       var idx = Number(carousel.dataset.index || -1);
-      var startX = 0, startY = 0, active = 0, dragging = false;
-      carousel.addEventListener('pointerdown', function (e) { startX = e.clientX; startY = e.clientY; dragging = true; });
-      carousel.addEventListener('pointerup', function (e) {
-        if (!dragging) return;
-        dragging = false;
-        var dx = e.clientX - startX, dy = e.clientY - startY;
-        if (Math.abs(dx) > 36 && Math.abs(dx) > Math.abs(dy)) {
-          var pages = $$('.pv-image-page', carousel).length;
-          active = Math.max(0, Math.min(pages - 1, active + (dx < 0 ? 1 : -1)));
-          track.style.transform = 'translate3d(' + (-active * 100) + '%,0,0)';
-          $$('.pv-image-dots i', carousel).forEach(function (dot, i) { dot.classList.toggle('is-active', i === active); });
-          if (state.list[idx]) setImageIndex(state.list[idx], active);
-        }
+      if (carousel.dataset.pvImageSwiper === '1') return;
+      var item = state.list[idx];
+      if (!item || !(item.images && item.images.length)) return;
+      carousel.dataset.pvImageSwiper = '1';
+      var swiper = new window.Swiper(carousel, {
+        direction: 'horizontal',
+        slidesPerView: 1,
+        speed: 220,
+        nested: true,
+        resistanceRatio: 0.45,
+        threshold: 2,
+        touchStartPreventDefault: false,
+        pagination: item.images.length > 1 ? { el: $('.pv-image-dots', carousel), clickable: false } : false,
+        on: { slideChange: function (sw) { setImageIndex(item, sw.activeIndex || 0); } }
       });
+      var current = getImageIndex(item);
+      if (current > 0) swiper.slideTo(current, 0, false);
     });
   }
   function setImageIndex(item, index) { var key = String(item && (item.tid || item.pid || state.list.indexOf(item)) || ''); state.imageIndex.set(key, index); }
@@ -658,7 +744,7 @@
 
   function buildChrome() {
     state.root.innerHTML = '' +
-      '<div class="pv-page"><div class="pv-slide-list"></div><div class="pv-source-notice">' + escapeHtml(TEXT.sourceNotice).replace(/\n/g, '<br>') + '</div></div>' +
+      '<div class="pv-page"><div class="pv-swiper swiper"><div class="swiper-wrapper"></div></div><div class="pv-source-notice">' + escapeHtml(TEXT.sourceNotice).replace(/\n/g, '<br>') + '</div></div>' +
       '<button type="button" class="pv-compose-fab">+</button>' +
       '<div class="pv-drawer-backdrop"></div><div class="pv-modal-backdrop"></div>' +
       '<section class="pv-compose-panel" role="dialog"><div class="pv-panel-head"><div class="pv-panel-title">' + TEXT.publish + '</div><button type="button" class="pv-close pv-compose-close">×</button></div><textarea placeholder="' + escapeHtml(TEXT.placeholder) + '"></textarea><div class="pv-preview-images"></div><div class="pv-compose-tools"><input type="file" class="pv-image-input" accept="image/*" multiple hidden><button type="button" class="pv-tool pv-image-btn">' + TEXT.chooseImage + '</button><button type="button" class="pv-tool pv-compose-translate" aria-label="' + TEXT.translate + '">' + iconTranslate() + '</button><button type="button" class="pv-primary pv-compose-submit">' + TEXT.send + '</button></div><div class="pv-meta"></div></section>' +
@@ -718,50 +804,27 @@
     if ((btn = e.target.closest('.pv-comment-translate'))) { e.preventDefault(); e.stopPropagation(); translateComment(e.target.closest('.pv-comment')); return; }
     if ((btn = e.target.closest('.pv-text-row'))) { if (!e.target.closest('.pv-translate-btn')) btn.classList.toggle('is-expanded'); }
   }
-  function shouldIgnoreVerticalDragTarget(target) { return !!target.closest('input, textarea, select, button, .pv-toolbar, .pv-comments-panel, .pv-compose-panel, .pv-translate-panel, .pv-viewer, .pv-image-carousel'); }
   function onRootPointerDown(e) {
     if (!e.target.closest('input, textarea, select, .pv-comments-panel, .pv-compose-panel, .pv-translate-panel, .pv-viewer')) unlockSoundFromGesture();
     var textRow = e.target.closest('.pv-text-row'); var translateBtn = e.target.closest('.pv-translate-btn, .pv-comment-translate');
     if (textRow || translateBtn) { clearTimeout(state.translateLongPressTimer); state.translateLongPressTimer = setTimeout(function () { openTranslateSettings(); }, 650); }
     var panel = $('.pv-comments-panel', state.root);
-    if (panel && panel.classList.contains('is-open') && e.target.closest('.pv-comments-panel') && !e.target.closest('input,button,.pv-voice-card')) { state.comments.dragCandidate = true; state.comments.dragStartY = e.clientY; state.comments.dragY = 0; return; }
-    if (shouldIgnoreVerticalDragTarget(e.target)) return;
-    state.drag.active = true; state.drag.startX = e.clientX; state.drag.startY = e.clientY; state.drag.dx = 0; state.drag.dy = 0; state.drag.startTime = Date.now(); state.drag.locked = '';
-    var wrap = $('.pv-slide-list', state.root); if (wrap) wrap.style.transitionDuration = '0ms';
+    if (panel && panel.classList.contains('is-open') && e.target.closest('.pv-comments-panel') && !e.target.closest('input,button,.pv-voice-card')) { state.comments.dragCandidate = true; state.comments.dragStartY = e.clientY; state.comments.dragY = 0; }
   }
   function onRootPointerMove(e) {
     var panel = $('.pv-comments-panel', state.root);
     if (state.comments.dragCandidate && !state.comments.dragging) { var dy0 = e.clientY - state.comments.dragStartY; if (dy0 > 8) state.comments.dragging = true; if (Math.abs(dy0) > 18 && dy0 < 0) state.comments.dragCandidate = false; }
-    if (state.comments.dragging) { var dy = Math.max(0, e.clientY - state.comments.dragStartY); state.comments.dragY = dy; if (panel) panel.style.transform = 'translateY(' + dy + 'px)'; if (e.cancelable) e.preventDefault(); return; }
-    if (!state.drag.active) return;
-    state.drag.dx = e.clientX - state.drag.startX; state.drag.dy = e.clientY - state.drag.startY;
-    if (!state.drag.locked && (Math.abs(state.drag.dx) > 8 || Math.abs(state.drag.dy) > 8)) state.drag.locked = Math.abs(state.drag.dy) >= Math.abs(state.drag.dx) * 0.72 ? 'y' : 'x';
-    if (state.drag.locked !== 'y') return;
-    if ((state.index === 0 && state.drag.dy > 0) || (state.index >= state.list.length - 1 && state.drag.dy < 0)) applySlideTransform(state.drag.dy * 0.28, false);
-    else applySlideTransform(state.drag.dy, false);
-    if (e.cancelable) e.preventDefault();
+    if (state.comments.dragging) { var dy = Math.max(0, e.clientY - state.comments.dragStartY); state.comments.dragY = dy; if (panel) panel.style.transform = 'translateY(' + dy + 'px)'; if (e.cancelable) e.preventDefault(); }
   }
   function onRootPointerUp(e) {
     clearTimeout(state.translateLongPressTimer);
     if (state.comments.dragging) { var panel = $('.pv-comments-panel', state.root); state.comments.dragging = false; state.comments.dragCandidate = false; var dy = Math.max(0, e.clientY - state.comments.dragStartY); panel.style.transform = ''; if (dy > 86) closeComments(); return; }
     state.comments.dragCandidate = false;
-    if (!state.drag.active) return;
-    var dx = e.clientX - state.drag.startX; var dy2 = e.clientY - state.drag.startY; var elapsed = Date.now() - state.drag.startTime; var isTap = Math.abs(dx) < 8 && Math.abs(dy2) < 8;
-    state.drag.active = false;
-    if (state.drag.locked === 'y') {
-      var goNext = dy2 < -CONFIG.slideThreshold || (elapsed < CONFIG.slideFlickMs && dy2 < -CONFIG.slideFlickDistance);
-      var goPrev = dy2 > CONFIG.slideThreshold || (elapsed < CONFIG.slideFlickMs && dy2 > CONFIG.slideFlickDistance);
-      if (goNext && state.index < state.list.length - 1) { pauseSlide(state.index); state.index += 1; renderWindow(); applySlideTransform(0, true); activateCurrent(true); hideComposerFab(); }
-      else if (goPrev && state.index > 0) { pauseSlide(state.index); state.index -= 1; renderWindow(); applySlideTransform(0, true); activateCurrent(true); hideComposerFab(); }
-      else applySlideTransform(0, true);
-      return;
-    }
-    applySlideTransform(0, true);
     var layer = e.target.closest('.pv-gesture-layer');
-    if (isTap && layer) { e.preventDefault(); e.stopPropagation(); handleTap(e, Number(layer.dataset.index)); }
+    if (layer) { e.preventDefault(); e.stopPropagation(); handleTap(e, Number(layer.dataset.index)); }
   }
-  function onRootPointerCancel() { clearTimeout(state.translateLongPressTimer); state.drag.active = false; applySlideTransform(0, true); state.comments.dragging = false; state.comments.dragCandidate = false; var p = $('.pv-comments-panel', state.root); if (p) p.style.transform = ''; }
+  function onRootPointerCancel() { clearTimeout(state.translateLongPressTimer); state.comments.dragging = false; state.comments.dragCandidate = false; var p = $('.pv-comments-panel', state.root); if (p) p.style.transform = ''; }
   function showEmpty(text) { var old = $('.pv-empty-page', state.root); if (old) old.remove(); var div = document.createElement('div'); div.className = 'pv-empty-page'; div.textContent = text || TEXT.empty; state.root.appendChild(div); }
-  function init() { state.root = document.getElementById('peipe-video-app'); if (!state.root) return; document.body.classList.add('pv-video-mode'); addPreconnects(); buildChrome(); showComposeFabInitial(); loadFeed(true); }
+  function init() { state.root = document.getElementById('peipe-video-app'); if (!state.root) return; document.body.classList.add('pv-video-mode'); addPreconnects(); buildChrome(); showComposeFabInitial(); ensureSwiper().then(function(){ initSwiper(); return loadFeed(true); }).catch(function(err){ console.error('[peipe-video] Swiper load failed', err); showEmpty('Swiper 加载失败，请确认 static/lib/swiper-bundle.min.js 存在'); }); }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 })();
