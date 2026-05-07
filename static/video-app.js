@@ -1,21 +1,20 @@
-/* Peipe /video mobile discover page v7
-   - Independent /video page, official NodeBB plugin backend feed only
-   - Swiper vertical feed with virtual slides
-   - TikTok official embed keeps official audio controls; no custom center play button
-   - Image posts use horizontal carousel; video posts use vertical feed
-   - Comment drawer, replies, translate for text/comments/input
+/* Peipe /video mobile discover page v8
+   - 持久化声音解锁：首次手势后所有视频自动带声音播放
+   - 切换视频不销毁 iframe，仅 pause/play，避免重建开销
+   - 滑动手势优化：被动监听 + 节流 virtualUpdate
+   - 修复多个边界 bug
 */
 (function () {
   'use strict';
 
-  if (window.__peipeVideoDiscoverV7) return;
-  window.__peipeVideoDiscoverV7 = true;
+  if (window.__peipeVideoDiscoverV8) return;
+  window.__peipeVideoDiscoverV8 = true;
 
   var CONFIG = Object.assign({
     cid: 6,
     pageSize: 12,
-    preloadAhead: 8,
-    preloadVideoAhead: 3,
+    preloadAhead: 6,
+    preloadVideoAhead: 2,
     imageMax: 4,
     coverCacheMs: 7 * 24 * 60 * 60 * 1000,
     translateCacheMs: 3 * 24 * 60 * 60 * 1000,
@@ -71,7 +70,8 @@
     aiApiKey: '密钥',
     aiPrompt: '提示词',
     voicePreview: '语音评论',
-    recording: '录音中'
+    recording: '录音中',
+    tapToUnmute: '点击开启声音'
   };
 
   var RE = {
@@ -81,6 +81,9 @@
     tiktokShort: /https?:\/\/(?:vt|vm)\.tiktok\.com\/[^\s<>\'"]+/ig,
     audioExt: /\.(m4a|mp3|wav|ogg|oga|webm|aac)(?:[?#].*)?$/i
   };
+
+  function safeJsonGet(key, fallback) { try { var raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : fallback; } catch (e) { return fallback; } }
+  function safeJsonSet(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) {} }
 
   var state = {
     root: null,
@@ -93,6 +96,7 @@
     players: new Map(),
     imageIndex: new Map(),
     hasInteracted: false,
+    soundUnlocked: !!safeJsonGet('pv-sound-unlocked', false),
     lastTap: { time: 0, x: 0, y: 0, timer: 0 },
     compose: {
       imageFiles: [],
@@ -101,13 +105,16 @@
       stream: null,
       chunks: [],
       startAt: 0,
-      timer: 0
+      timer: 0,
+      voiceBlob: null,
+      voiceUrl: '',
+      voiceDuration: 0
     },
     viewer: { images: [], index: 0, swiper: null, startX: 0, startY: 0, down: false },
     imageSwipers: new Map(),
-    soundUnlocked: !!safeJsonGet('pv-sound-unlocked', false),
     comments: { item: null, posts: [], loading: false, replyTo: null, dragY: 0, dragStartY: 0, dragging: false, dragCandidate: false, dragStartTopZone: false, voiceBlob: null, voiceUrl: '', voiceDuration: 0, mediaRecorder: null, stream: null, chunks: [], startAt: 0, timer: 0 },
-    translateLongPressTimer: 0
+    translateLongPressTimer: 0,
+    virtualUpdateTimer: 0
   };
 
   function $(sel, root) { return (root || document).querySelector(sel); }
@@ -124,12 +131,10 @@
     return (window.config && (window.config.csrf_token || window.config.csrfToken)) ||
       ($('meta[name="csrf-token"]') && $('meta[name="csrf-token"]').getAttribute('content')) || '';
   }
-  function currentUser() { return (window.app && window.app.user) || null; }
+  function currentUser() { return (window.app && window.app.user) || (window.config && window.config.user) || null; }
   function isLoggedIn() { var u = currentUser(); return !!(u && Number(u.uid || 0) > 0); }
   function alertError(msg) { if (window.app && app.alertError) app.alertError(msg); else window.alert(msg); }
   function alertSuccess(msg) { if (window.app && app.alertSuccess) app.alertSuccess(msg); }
-  function safeJsonGet(key, fallback) { try { var raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : fallback; } catch (e) { return fallback; } }
-  function safeJsonSet(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) {} }
   function escapeHtml(s) {
     return String(s || '').replace(/[&<>'"]/g, function (ch) {
       return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[ch];
@@ -242,14 +247,15 @@
     return loadAsset('link', CONFIG.swiperCdnCss)
       .then(function () { return loadAsset('script', CONFIG.swiperCdnJs); })
       .then(function () { return !!window.Swiper; })
-      .catch(function (err) { console.warn('[peipe-video] Swiper load failed, fallback gestures will be used', err); return false; });
+      .catch(function (err) { console.warn('[peipe-video] Swiper load failed', err); return false; });
   }
 
   function loadFeed(refresh) {
     if (state.feedLoading || (state.feedDone && !refresh)) return Promise.resolve();
     state.feedLoading = true;
     if (refresh) {
-      state.feedPage = 1; state.feedDone = false; state.list = []; state.index = 0; state.players.clear();
+      state.feedPage = 1; state.feedDone = false; state.list = []; state.index = 0;
+      destroyAllPlayers();
       updateSwiperSlides(true);
     }
     var page = state.feedPage;
@@ -274,6 +280,13 @@
       .finally(function () { state.feedLoading = false; });
   }
 
+  function destroyAllPlayers() {
+    state.players.forEach(function (p) {
+      try { if (p.iframe) { p.iframe.src = 'about:blank'; p.iframe.remove(); } } catch (e) {}
+    });
+    state.players.clear();
+  }
+
   function initSwiper() {
     var el = $('.pv-swiper', state.root);
     if (!el || !window.Swiper) return false;
@@ -281,44 +294,47 @@
     state.swiper = new window.Swiper(el, {
       direction: 'vertical',
       slidesPerView: 1,
-      speed: 260,
-      threshold: 2,
+      speed: 240,
+      threshold: 4,
       touchStartPreventDefault: false,
       touchMoveStopPropagation: false,
       touchReleaseOnEdges: false,
-      resistanceRatio: 0.38,
-      longSwipesRatio: 0.12,
+      resistanceRatio: 0.4,
+      longSwipesRatio: 0.18,
       followFinger: true,
-      watchSlidesProgress: true,
+      watchSlidesProgress: false,
       preventClicks: false,
       preventClicksPropagation: false,
-      passiveListeners: false,
+      passiveListeners: true,
       virtual: {
         enabled: true,
-        addSlidesBefore: 2,
-        addSlidesAfter: Math.max(10, CONFIG.preloadAhead + 4),
+        addSlidesBefore: 1,
+        addSlidesAfter: 3,
         slides: state.list.map(renderSlideHtml)
       },
       on: {
         init: function (swiper) {
           state.index = swiper.activeIndex || 0;
           afterVirtualUpdate();
-          activateCurrent(false);
+          activateCurrent();
           showComposeFabInitial();
         },
         slideChangeTransitionStart: function (swiper) {
-          state.hasInteracted = true;
           hideComposerFab();
-          pauseSlide(swiper.previousIndex);
+          if (typeof swiper.previousIndex === 'number' && swiper.previousIndex !== swiper.activeIndex) {
+            pauseSlide(swiper.previousIndex);
+          }
         },
         slideChange: function (swiper) {
           state.index = swiper.activeIndex || 0;
           if (state.index >= state.list.length - 4) loadFeed(false);
-          afterVirtualUpdate();
-          pauseOtherPlayers(playerKey(state.index, (state.list[state.index] && state.list[state.index].tiktoks && state.list[state.index].tiktoks[0] && state.list[state.index].tiktoks[0].videoId) || ''));
-          activateCurrent(false);
+          activateCurrent();
         },
-        virtualUpdate: function () { afterVirtualUpdate(); },
+        virtualUpdate: function () {
+          // 节流，避免频繁触发
+          clearTimeout(state.virtualUpdateTimer);
+          state.virtualUpdateTimer = setTimeout(afterVirtualUpdate, 30);
+        },
         reachEnd: function () { loadFeed(false); }
       }
     });
@@ -336,10 +352,10 @@
   }
   function afterVirtualUpdate() {
     if (!state.root) return;
+
     $$('.pv-slide-item', state.root).forEach(function (slide) {
       var index = Number(slide.dataset.index || -1);
       slide.classList.toggle('is-active', index === state.index);
-      prepareSlide(index, false);
     });
     initImageSwipers();
     preloadNextVideos(state.index);
@@ -366,7 +382,6 @@
     var avatarHtml = avatar ? '<img class="pv-avatar" src="' + escapeHtml(avatar) + '" alt="avatar">' : '<div class="pv-avatar"></div>';
     var following = readFollow(author) || item.viewer.following;
     var liked = !!(readVote(item.pid, item.tid) || item.viewer.liked);
-    var showImagePill = hasVideo && images.length;
 
     return '' +
       '<section class="pv-slide-item ' + (hasVideo ? 'is-video' : 'is-image') + '" data-index="' + index + '" data-tid="' + escapeHtml(item.tid || '') + '">' +
@@ -374,6 +389,7 @@
         (hasVideo ? '<div class="pv-cover"><img alt="cover"></div>' : '') +
         '<div class="pv-gradient"></div>' +
         (hasVideo ? '<div class="pv-tap-zone" data-index="' + index + '"></div>' : '') +
+        (hasVideo && !state.soundUnlocked ? '<div class="pv-unmute-hint" data-index="' + index + '"><span>🔇 ' + TEXT.tapToUnmute + '</span></div>' : '') +
         '<div class="pv-toolbar">' +
           '<div class="pv-avatar-wrap"><a href="' + authorHref(author) + '">' + avatarHtml + '</a>' +
           (author.uid && !isOwnAuthor(author) ? '<button type="button" class="pv-follow-plus ' + (following ? 'is-following' : '') + '" data-index="' + index + '">' + (following ? '✓' : '+') + '</button>' : '') + '</div>' +
@@ -407,7 +423,7 @@
     var images = (item.images || []).slice(0, CONFIG.imageMax);
     var slideIndex = state.list.indexOf(item);
     var slides = images.map(function (src, i) {
-      return '<div class="swiper-slide pv-image-swiper-slide"><img src="' + escapeHtml(src) + '" alt="image ' + (i + 1) + '"></div>';
+      return '<div class="swiper-slide pv-image-swiper-slide"><img src="' + escapeHtml(src) + '" alt="image ' + (i + 1) + '" loading="lazy"></div>';
     }).join('');
     var dots = images.length > 1 ? '<div class="pv-image-pagination"></div>' : '';
     return '<div class="pv-image-main" data-index="' + slideIndex + '">' +
@@ -416,9 +432,15 @@
   }
   function initImageSwipers() {
     if (!window.Swiper) return;
+
     $$('.pv-image-swiper', state.root).forEach(function (el) {
       var idx = Number(el.dataset.index || -1);
-      if (state.imageSwipers.has(idx) && state.imageSwipers.get(idx).el === el) return;
+      if (state.imageSwipers.has(idx)) {
+        var existing = state.imageSwipers.get(idx);
+        if (existing.el === el) return;
+        try { existing.destroy(true, true); } catch (e) {}
+        state.imageSwipers.delete(idx);
+      }
       var item = state.list[idx];
       if (!item || !(item.images && item.images.length)) return;
       var swiper = new window.Swiper(el, {
@@ -427,29 +449,29 @@
         speed: 220,
         nested: true,
         resistanceRatio: 0.55,
-        threshold: 3,
+        threshold: 6,
+        passiveListeners: true,
         pagination: { el: $('.pv-image-pagination', el), clickable: false },
         on: { slideChange: function (sw) { setImageIndex(item, sw.activeIndex || 0); } }
       });
       if (getImageIndex(item) > 0) swiper.slideTo(getImageIndex(item), 0);
       state.imageSwipers.set(idx, swiper);
     });
-  }
-  function updateImageSlide(index) {
-    var item = state.list[index];
-    var slide = findSlide(index);
-    if (!item || !slide || !(item.images && item.images.length)) return;
-    var media = $('.pv-media', slide);
-    if (!media) return;
-    media.innerHTML = renderImageMain(item, getImageIndex(item));
-    initImageSwipers();
+    // 清理已不在 DOM 中的 imageSwiper
+    state.imageSwipers.forEach(function (sw, idx) {
+      if (!sw.el || !document.body.contains(sw.el)) {
+        try { sw.destroy(true, true); } catch (e) {}
+        state.imageSwipers.delete(idx);
+      }
+    });
   }
   function findSlide(index) { return $('.pv-slide-item[data-index="' + index + '"]', state.root); }
 
-  function buildPlayerUrl(videoId, autoplay) {
+  // ============ 关键：声音持久化 + iframe 复用 ============
+  function buildPlayerUrl(videoId, autoplay, muted) {
     var params = new URLSearchParams({
       autoplay: autoplay ? '1' : '0',
-      muted: '0',
+      muted: muted ? '1' : '0',
       loop: '1',
       rel: '0',
       controls: '1',
@@ -467,6 +489,7 @@
     return 'https://www.tiktok.com/player/v1/' + encodeURIComponent(videoId) + '?' + params.toString();
   }
   function playerKey(index, videoId) { return index + ':' + videoId; }
+
   function ensureTikTokPlayer(index, autoplay) {
     var item = state.list[index];
     var slide = findSlide(index);
@@ -475,19 +498,25 @@
     var key = playerKey(index, tk.videoId);
     var player = state.players.get(key);
     if (player && player.iframe && player.iframe.parentNode) return player;
+
     var shell = $('.pv-video-shell', slide);
     if (!shell) return null;
     shell.innerHTML = '';
     var iframe = document.createElement('iframe');
     iframe.className = 'pv-tiktok-frame';
-    iframe.src = buildPlayerUrl(tk.videoId, !!autoplay);
+    // 关键：声音解锁后所有视频都用 muted=0 打开
+    var shouldUnmute = state.soundUnlocked || index === state.index;
+    iframe.src = buildPlayerUrl(tk.videoId, !!autoplay, !shouldUnmute);
     iframe.allow = 'autoplay; fullscreen; encrypted-media; picture-in-picture';
     iframe.loading = 'eager';
-    iframe.fetchPriority = index === state.index ? 'high' : 'low';
+    if ('fetchPriority' in iframe) iframe.fetchPriority = (index === state.index ? 'high' : 'low');
     iframe.referrerPolicy = 'strict-origin-when-cross-origin';
     iframe.title = 'TikTok Player';
     shell.appendChild(iframe);
-    player = { key: key, index: index, item: item, videoId: tk.videoId, iframe: iframe, ready: false, wantPlay: false, status: 'paused' };
+    player = {
+      key: key, index: index, item: item, videoId: tk.videoId, iframe: iframe,
+      ready: false, wantPlay: !!autoplay, status: 'paused', initialMuted: !shouldUnmute
+    };
     state.players.set(key, player);
     fetchCover(tk.videoId, tk.url).then(function (url) {
       if (!url) return;
@@ -496,106 +525,126 @@
     });
     return player;
   }
-  function prepareSlide(index, autoplay) {
-    if (index < 0 || index >= state.list.length) return;
-    var item = state.list[index];
-    if (!item || !(item.tiktoks && item.tiktoks[0])) return;
-    var player = ensureTikTokPlayer(index, !!autoplay || (state.soundUnlocked && index === state.index));
-    if (player && autoplay && player.iframe && !/autoplay=1/.test(player.iframe.src)) {
-      player.iframe.src = buildPlayerUrl(player.videoId, true);
-    }
-  }
+
   function preloadNextVideos(fromIndex) {
     var found = 0;
-    var maxScan = Math.min(state.list.length - 1, fromIndex + Math.max(12, CONFIG.preloadAhead + 8));
-    for (var i = Math.max(0, fromIndex); i <= maxScan && found < (CONFIG.preloadVideoAhead || 3); i += 1) {
+    var maxScan = Math.min(state.list.length - 1, fromIndex + Math.max(6, CONFIG.preloadAhead));
+    for (var i = Math.max(0, fromIndex); i <= maxScan && found < (CONFIG.preloadVideoAhead + 1); i += 1) {
       var it = state.list[i];
       if (it && it.tiktoks && it.tiktoks[0]) {
-        prepareSlide(i, i === state.index && (state.hasInteracted || state.soundUnlocked));
+        // 当前 slide autoplay，其他仅预创建 iframe 不自动播
+        ensureTikTokPlayer(i, i === state.index);
         found += 1;
       }
     }
   }
-  function activateCurrent(first) {
+
+  function activateCurrent() {
     state.index = state.swiper ? state.swiper.activeIndex : state.index;
+
     $$('.pv-slide-item', state.root).forEach(function (slide) {
       var idx = Number(slide.dataset.index || -1);
       slide.classList.toggle('is-active', idx === state.index);
-      if (idx !== state.index) pauseSlide(idx);
+      if (idx !== state.index) softPauseSlide(idx);
     });
     preloadNextVideos(state.index);
-    playSlide(state.index, !!(state.hasInteracted || state.soundUnlocked));
+    playSlide(state.index);
     prunePlayers();
   }
+
   function sendToPlayer(iframe, type, value) {
     if (!iframe || !iframe.contentWindow) return;
     var msg = { 'x-tiktok-player': true, type: type };
     if (arguments.length >= 3) msg.value = value;
-    iframe.contentWindow.postMessage(msg, 'https://www.tiktok.com');
+    try { iframe.contentWindow.postMessage(msg, 'https://www.tiktok.com'); } catch (e) {}
   }
-  function hardStopPlayer(player) {
-    if (!player || !player.iframe) return;
-    sendToPlayer(player.iframe, 'pause');
-    setTimeout(function () { sendToPlayer(player.iframe, 'pause'); }, 60);
-    setTimeout(function () {
-      if (!player || !player.iframe || player.index === state.index) return;
-      try { player.iframe.src = 'about:blank'; } catch (e) {}
-      player.ready = false;
-      player.status = 'paused';
-      player.wantPlay = false;
-    }, 180);
-  }
-  function playSlide(index, userGesture) {
-    var item = state.list[index];
-    if (!item || !(item.tiktoks && item.tiktoks[0])) { preloadNextVideos(index); return; }
-    var player = ensureTikTokPlayer(index, !!userGesture);
-    if (!player || !player.iframe) return;
-    player.wantPlay = true;
-    if ((userGesture || state.soundUnlocked) && player.iframe && !/autoplay=1/.test(player.iframe.src)) {
-      player.iframe.src = buildPlayerUrl(player.videoId, true);
-    }
-    pauseOtherPlayers(player.key);
-    var slide = findSlide(index);
-    if (slide) slide.classList.add('is-loading');
-    if (userGesture) { state.hasInteracted = true; state.soundUnlocked = true; safeJsonSet('pv-sound-unlocked', true); }
-    sendToPlayer(player.iframe, 'unMute');
-    sendToPlayer(player.iframe, 'play');
-    setTimeout(function () { sendToPlayer(player.iframe, 'play'); sendToPlayer(player.iframe, 'unMute'); }, 80);
-    setTimeout(function () { sendToPlayer(player.iframe, 'unMute'); sendToPlayer(player.iframe, 'play'); }, 260);
-    setTimeout(function () { sendToPlayer(player.iframe, 'unMute'); sendToPlayer(player.iframe, 'play'); }, 720);
-    setTimeout(function () { if (player.wantPlay && player.status !== 'playing') markSlidePlaying(index); }, 1800);
-  }
-  function pauseSlide(index) {
+
+  // 软暂停：仅 pause，不销毁 iframe，保持 src 不变（关键优化）
+  function softPauseSlide(index) {
     state.players.forEach(function (p) {
       if (p.index !== index) return;
-      p.wantPlay = false; p.status = 'paused';
-      hardStopPlayer(p);
+      p.wantPlay = false;
+      p.status = 'paused';
+      sendToPlayer(p.iframe, 'pause');
     });
     var slide = findSlide(index);
     if (slide) slide.classList.remove('is-playing', 'is-loading');
   }
-  function pauseOtherPlayers(currentKey) {
-    state.players.forEach(function (p, key) {
-      if (key === currentKey) return;
-      var wasActive = p.wantPlay || p.status === 'playing' || p.index < state.index || Math.abs(p.index - state.index) > CONFIG.preloadAhead;
-      p.wantPlay = false; p.status = 'paused';
-      if (p.iframe) {
-        sendToPlayer(p.iframe, 'pause');
-        setTimeout(function(){ sendToPlayer(p.iframe, 'pause'); }, 80);
-        if (wasActive) hardStopPlayer(p);
-      }
-      var slide = findSlide(p.index);
-      if (slide) slide.classList.remove('is-playing', 'is-loading');
-    });
+
+  // 用于真正切换页面/不可见时的硬停（保留接口给可见性切换使用）
+  function pauseSlide(index) {
+    softPauseSlide(index);
   }
+
+  function playSlide(index) {
+    var item = state.list[index];
+    if (!item || !(item.tiktoks && item.tiktoks[0])) { return; }
+    var player = ensureTikTokPlayer(index, true);
+    if (!player || !player.iframe) return;
+    player.wantPlay = true;
+
+    // 如果声音已经解锁，但 iframe 当前是 muted=1 状态，需要重建一次（仅这一次）
+    if (state.soundUnlocked && player.initialMuted) {
+      player.iframe.src = buildPlayerUrl(player.videoId, true, false);
+      player.initialMuted = false;
+      player.ready = false;
+    }
+
+    var slide = findSlide(index);
+    if (slide) slide.classList.add('is-loading');
+
+    // 单次发送，等 onPlayerReady 回调后会再发；减少冗余
+    sendToPlayer(player.iframe, 'play');
+    if (state.soundUnlocked) sendToPlayer(player.iframe, 'unMute');
+
+    // 兜底：1s 后若还没播放再发一次
+    setTimeout(function () {
+      if (player.wantPlay && player.status !== 'playing' && player.iframe && player.iframe.parentNode) {
+        sendToPlayer(player.iframe, 'play');
+        if (state.soundUnlocked) sendToPlayer(player.iframe, 'unMute');
+      }
+    }, 900);
+  }
+
+  // 用户首次手势触发：标记声音已解锁并重启当前播放器（带音频）
+  function unlockSoundAndPlay() {
+    state.hasInteracted = true;
+    var firstUnlock = !state.soundUnlocked;
+    state.soundUnlocked = true;
+    safeJsonSet('pv-sound-unlocked', true);
+
+    if (firstUnlock) {
+      // 隐藏所有未静音提示
+
+      $$('.pv-unmute-hint', state.root).forEach(function (n) { n.classList.add('is-hidden'); });
+      // 重建当前 iframe（首次解锁需要重新加载带 muted=0 的 src）
+      var current = null;
+      state.players.forEach(function (p) { if (p.index === state.index) current = p; });
+      if (current && current.iframe) {
+        current.iframe.src = buildPlayerUrl(current.videoId, true, false);
+        current.initialMuted = false;
+        current.wantPlay = true;
+        current.ready = false;
+      }
+    }
+    // 直接发送 play + unMute
+    var p = null;
+    state.players.forEach(function (pp) { if (pp.index === state.index) p = pp; });
+    if (p && p.iframe) {
+      sendToPlayer(p.iframe, 'unMute');
+      sendToPlayer(p.iframe, 'play');
+    }
+  }
+
   function prunePlayers() {
-    var keep = CONFIG.preloadAhead + 2;
+    var keep = CONFIG.preloadAhead + 1;
     state.players.forEach(function (p, key) {
       if (Math.abs(p.index - state.index) <= keep) return;
-      try { if (p.iframe) { sendToPlayer(p.iframe, 'pause'); p.iframe.src = 'about:blank'; p.iframe.remove(); } } catch (e) {}
+      try { if (p.iframe) { p.iframe.src = 'about:blank'; p.iframe.remove(); } } catch (e) {}
       state.players.delete(key);
     });
   }
+
   function markSlidePlaying(index) {
     var slide = findSlide(index);
     if (!slide) return;
@@ -603,7 +652,10 @@
     if (cover) cover.classList.add('is-hidden');
     slide.classList.add('is-playing');
     slide.classList.remove('is-loading');
+    var hint = $('.pv-unmute-hint', slide);
+    if (hint && state.soundUnlocked) hint.classList.add('is-hidden');
   }
+
   window.addEventListener('message', function (event) {
     var data = event.data;
     if (typeof data === 'string') { try { data = JSON.parse(data); } catch (e) { return; } }
@@ -615,17 +667,44 @@
       if (!player.iframe || player.iframe.contentWindow !== event.source) return;
       if (data.type === 'onPlayerReady') {
         player.ready = true;
-        if (player.wantPlay) { sendToPlayer(player.iframe, 'unMute'); sendToPlayer(player.iframe, 'play'); }
+        if (player.wantPlay) {
+          if (state.soundUnlocked) sendToPlayer(player.iframe, 'unMute');
+          sendToPlayer(player.iframe, 'play');
+        }
         return;
       }
       if (data.type === 'onStateChange') {
-        var value = Number(data.value); var word = String(data.value || '').toLowerCase();
-        if (value === 1 || word === 'playing') { player.status = 'playing'; state.soundUnlocked = true; safeJsonSet('pv-sound-unlocked', true); pauseOtherPlayers(player.key); markSlidePlaying(player.index); }
-        else if (value === 2 || value === 0 || word === 'paused' || word === 'ended') { player.status = 'paused'; var s = findSlide(player.index); if (s) s.classList.remove('is-playing', 'is-loading'); }
-        else if (value === 3 || word === 'buffering') { var s2 = findSlide(player.index); if (s2 && player.wantPlay) s2.classList.add('is-loading'); }
+        var value = Number(data.value);
+        var word = String(data.value || '').toLowerCase();
+        if (value === 1 || word === 'playing') {
+          player.status = 'playing';
+          // 检测到真正播放了，认为声音已经能用
+          if (player.wantPlay && !player.initialMuted) {
+            state.soundUnlocked = true;
+            safeJsonSet('pv-sound-unlocked', true);
+          }
+          markSlidePlaying(player.index);
+        } else if (value === 2 || value === 0 || word === 'paused' || word === 'ended') {
+          player.status = 'paused';
+          var s = findSlide(player.index);
+          if (s) s.classList.remove('is-playing', 'is-loading');
+        } else if (value === 3 || word === 'buffering') {
+          var s2 = findSlide(player.index);
+          if (s2 && player.wantPlay) s2.classList.add('is-loading');
+        }
+      }
+      // 监听音量事件，用户在 TikTok 内部解除静音也算解锁
+      if (data.type === 'onMute' || data.type === 'onVolumeChange') {
+        if (data.value === false || data.value === 0 || (typeof data.value === 'number' && data.value > 0)) {
+          if (data.type === 'onMute' && data.value === false) {
+            state.soundUnlocked = true;
+            safeJsonSet('pv-sound-unlocked', true);
+          }
+        }
       }
     });
   });
+
   function coverCacheKey(videoId) { return 'pv-cover:' + videoId; }
   function fetchCover(videoId, url) {
     var cached = safeJsonGet(coverCacheKey(videoId), null);
@@ -650,9 +729,15 @@
     clearTimeout(last.timer);
     last.timer = setTimeout(function () {
       if (!(item.tiktoks && item.tiktoks[0])) return;
-      var player = Array.from(state.players.values()).find(function (p) { return p.index === index; });
-      if (player && player.status === 'playing') pauseSlide(index);
-      else { state.hasInteracted = true; playSlide(index, true); }
+      // 首次点击 → 解锁声音并播放
+      if (!state.soundUnlocked) {
+        unlockSoundAndPlay();
+        return;
+      }
+      var player = null;
+      state.players.forEach(function (p) { if (p.index === index) player = p; });
+      if (player && player.status === 'playing') softPauseSlide(index);
+      else playSlide(index);
     }, CONFIG.doubleTapMs + 20);
   }
   function showHeart(x, y) {
@@ -803,13 +888,13 @@
     if (window.Swiper) {
       state.viewer.swiper = new window.Swiper($('.pv-viewer-swiper', viewer), {
         direction: 'horizontal', slidesPerView: 1, speed: 220, initialSlide: state.viewer.index,
+        passiveListeners: true,
         pagination: { el: $('.pv-viewer-pagination', viewer), clickable: false },
         on: { slideChange: function (sw) { state.viewer.index = sw.activeIndex || 0; } }
       });
     }
   }
   function closeViewer() { $('.pv-viewer', state.root).classList.remove('is-open'); }
-  function moveViewer(delta) { if (state.viewer.swiper) state.viewer.swiper.slideTo(Math.max(0, Math.min(state.viewer.images.length - 1, state.viewer.index + delta))); }
 
   function isAudioHref(href) { return RE.audioExt.test(String(href || '').split('?')[0]) || /[?&](?:haa8dur|dur|duration)=/i.test(String(href || '')); }
   function parseDurationFromUrl(url) { try { var u = new URL(String(url || ''), location.origin); var raw = u.searchParams.get('haa8dur') || u.searchParams.get('dur') || u.searchParams.get('duration'); return Math.max(0, Number(raw || 0) || 0); } catch (e) { var m = String(url || '').match(/[?&](?:haa8dur|dur|duration)=(\d+(?:\.\d+)?)/i); return m ? Number(m[1]) || 0 : 0; } }
@@ -824,6 +909,7 @@
   function toggleVoiceCard(card) {
     if (!card) return; var src = card.dataset.src; if (!src) return;
     var audio = card._pvAudio || new Audio(src); card._pvAudio = audio; audio.preload = 'metadata';
+
     $$('.pv-voice-card.playing', state.root).forEach(function (node) { if (node !== card && node._pvAudio) { node._pvAudio.pause(); node.classList.remove('playing'); $('.pv-voice-play', node).textContent = '▶'; } });
     audio.onloadedmetadata = function () { if (audio.duration && isFinite(audio.duration)) $('.pv-voice-time', card).textContent = formatDuration(audio.duration); };
     audio.ontimeupdate = function () { if (!audio.paused) $('.pv-voice-time', card).textContent = formatDuration(audio.currentTime); };
@@ -883,14 +969,15 @@
     state.comments.voiceUrl = blob ? URL.createObjectURL(blob) : '';
     var wrap = $('.pv-comment-voice-preview', state.root);
     if (!wrap) return;
-    wrap.innerHTML = blob ? renderVoiceCard({ url: state.comments.voiceUrl }, 'is-preview') + '<button type="button" class="pv-comment-voice-remove">×</button>' : ''; wrap.classList.toggle('is-open', !!blob); updateCommentActionButton();
+    wrap.innerHTML = blob ? renderVoiceCard({ url: state.comments.voiceUrl }, 'is-preview') + '<button type="button" class="pv-comment-voice-remove">×</button>' : '';
     wrap.classList.toggle('is-open', !!blob);
+    updateCommentActionButton();
   }
   function toggleCommentRecording() {
     var btn = $('.pv-comment-action-btn', state.root);
     if (state.comments.mediaRecorder && state.comments.mediaRecorder.state === 'recording') { stopCommentRecording(false); return; }
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) return alertError('当前浏览器不支持录音');
-    navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, echoCancellationType: 'system', noiseSuppression: true, autoGainControl: true } }).catch(function () { return navigator.mediaDevices.getUserMedia({ audio: true }); }).then(function (stream) {
+    navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } }).catch(function () { return navigator.mediaDevices.getUserMedia({ audio: true }); }).then(function (stream) {
       state.comments.stream = stream; state.comments.chunks = []; state.comments.startAt = Date.now();
       var mime = recorderMime(); var rec = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 16000 } : { audioBitsPerSecond: 16000 }); state.comments.mediaRecorder = rec;
       rec.ondataavailable = function (e) { if (e.data && e.data.size) state.comments.chunks.push(e.data); };
@@ -917,7 +1004,7 @@
       if (state.comments.replyTo && state.comments.replyTo.pid) payload.toPid = state.comments.replyTo.pid;
       return apiFetch('/api/v3/topics/' + encodeURIComponent(item.tid), { method: 'POST', headers: { 'content-type': 'application/json; charset=utf-8', 'x-csrf-token': csrfToken() }, body: JSON.stringify(payload) });
     }).then(function () { input.value = ''; clearReplyTarget(); setCommentVoice(null, 0); updateCommentActionButton(); item.counts.comments += 1; updateCountUi(item); openComments(item); })
-      .catch(function () { alertError(TEXT.commentFail); window.open(item.href, '_blank'); })
+      .catch(function () { alertError(TEXT.commentFail); })
       .finally(function () { if (btn) btn.disabled = false; });
   }
   function updateCountUi(item) { var slide = findSlide(state.list.indexOf(item)); if (!slide) return; var btn = $('.pv-comment-btn span:last-child', slide); if (btn) btn.textContent = formatCount(item.counts.comments); }
@@ -926,8 +1013,8 @@
 
   function showComposeFabInitial() { var fab = $('.pv-compose-fab', state.root); if (!fab) return; fab.classList.remove('is-hidden'); }
   function hideComposerFab() { var fab = $('.pv-compose-fab', state.root); if (!fab) return; fab.classList.add('is-hidden'); }
-  function openCompose() { pauseSlide(state.index); $('.pv-drawer-backdrop', state.root).classList.add('is-open'); $('.pv-compose-panel', state.root).classList.add('is-open'); hideComposerFab(); }
-  function closeCompose() { $('.pv-compose-panel', state.root).classList.remove('is-open'); $('.pv-drawer-backdrop', state.root).classList.remove('is-open'); }
+  function openCompose() { softPauseSlide(state.index); $('.pv-drawer-backdrop', state.root).classList.add('is-open'); $('.pv-compose-panel', state.root).classList.add('is-open'); hideComposerFab(); }
+  function closeCompose() { $('.pv-compose-panel', state.root).classList.remove('is-open'); $('.pv-drawer-backdrop', state.root).classList.remove('is-open'); playSlide(state.index); showComposeFabInitial(); }
   function resetCompose() { var p = $('.pv-compose-panel', state.root); $('textarea', p).value = ''; setPendingImages([]); $('.pv-meta', p).textContent = ''; }
 
   function canCanvasEncode(type) {
@@ -965,7 +1052,6 @@
     state.compose.imageFiles = list; state.compose.imageUrls = list.map(function (f) { return URL.createObjectURL(f); });
     $('.pv-preview-images', state.root).innerHTML = state.compose.imageUrls.map(function (u) { return '<img src="' + u + '" alt="preview">'; }).join('');
   }
-  function setPendingVoice(blob, duration) { if (state.compose.voiceUrl) URL.revokeObjectURL(state.compose.voiceUrl); state.compose.voiceBlob = blob || null; state.compose.voiceDuration = Math.max(0, Math.round(Number(duration) || 0)); state.compose.voiceUrl = blob ? URL.createObjectURL(blob) : ''; var meta = $('.pv-compose-panel .pv-meta', state.root); if (blob) meta.textContent = TEXT.voiceMsg + ' ' + formatDuration(state.compose.voiceDuration); }
   function uploadToNodeBB(file) {
     var form = new FormData(); form.append('files[]', file); form.append('cid', String(CONFIG.cid));
     return fetch(rel('/api/post/upload'), { method: 'POST', credentials: 'same-origin', headers: { 'x-csrf-token': csrfToken(), 'x-requested-with': 'XMLHttpRequest' }, body: form })
@@ -993,19 +1079,6 @@
       .finally(function () { btn.disabled = false; btn.textContent = TEXT.send; meta.textContent = ''; });
   }
   function recorderMime() { if (!window.MediaRecorder) return ''; return ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/ogg'].find(function (t) { return MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t); }) || ''; }
-  function toggleRecording() {
-    var btn = $('.pv-record-btn', state.root);
-    if (state.compose.mediaRecorder && state.compose.mediaRecorder.state === 'recording') { stopRecording(false); return; }
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) return alertError('当前浏览器不支持录音');
-    navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
-      state.compose.stream = stream; state.compose.chunks = []; state.compose.startAt = Date.now();
-      var mime = recorderMime(); var rec = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 16000 } : { audioBitsPerSecond: 16000 }); state.compose.mediaRecorder = rec;
-      rec.ondataavailable = function (e) { if (e.data && e.data.size) state.compose.chunks.push(e.data); };
-      rec.onstop = function () { var dur = Math.max(1, Math.round((Date.now() - state.compose.startAt) / 1000)); if (state.compose.stream) state.compose.stream.getTracks().forEach(function (t) { t.stop(); }); clearInterval(state.compose.timer); btn.textContent = TEXT.record; if (state.compose.chunks.length) setPendingVoice(new Blob(state.compose.chunks, { type: state.compose.chunks[0].type || mime || 'audio/webm' }), dur); };
-      rec.start(250); btn.textContent = TEXT.stop; state.compose.timer = setInterval(function () { $('.pv-compose-panel .pv-meta', state.root).textContent = TEXT.voiceMsg + ' ' + formatDuration(Math.floor((Date.now() - state.compose.startAt) / 1000)); }, 250);
-    }).catch(function () { alertError('麦克风权限未开启'); });
-  }
-  function stopRecording(silent) { var rec = state.compose.mediaRecorder; if (rec && rec.state === 'recording') { try { rec.stop(); } catch (e) {} } if (state.compose.stream) state.compose.stream.getTracks().forEach(function (t) { t.stop(); }); clearInterval(state.compose.timer); if (!silent) $('.pv-record-btn', state.root).textContent = TEXT.record; }
 
   function buildChrome() {
     state.root.innerHTML = '' +
@@ -1029,18 +1102,10 @@
     ['pointerup','pointercancel','pointerleave'].forEach(function (n) { el.addEventListener(n, function () { clearTimeout(timer); timer = 0; }); });
   }
 
-  function unlockSoundFromGesture() {
-    if (state.hasInteracted && state.soundUnlocked) return;
-    state.hasInteracted = true;
-    state.soundUnlocked = true;
-    safeJsonSet('pv-sound-unlocked', true);
-    playSlide(state.index, true);
-  }
-
   function bindChrome() {
     state.root.addEventListener('click', onRootClick, true);
     state.root.addEventListener('pointerdown', onRootPointerDown, true);
-    state.root.addEventListener('pointermove', onRootPointerMove, true);
+    state.root.addEventListener('pointermove', onRootPointerMove, { capture: true, passive: false });
     state.root.addEventListener('pointerup', onRootPointerUp, true);
     state.root.addEventListener('pointercancel', onRootPointerCancel, true);
     $('.pv-compose-fab', state.root).addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); openCompose(); });
@@ -1060,12 +1125,26 @@
     $('.pv-translate-close', state.root).addEventListener('click', closeTranslateSettings);
     $('.pv-modal-backdrop', state.root).addEventListener('click', closeTranslateSettings);
     $('.pv-translate-save', state.root).addEventListener('click', function () { var p = $('.pv-translate-panel', state.root); safeJsonSet('pv-translate-settings', { provider: $('[name="provider"]', p).value, sourceLang: $('[name="sourceLang"]', p).value, targetLang: $('[name="targetLang"]', p).value, aiEndpoint: $('[name="aiEndpoint"]', p).value, aiModel: $('[name="aiModel"]', p).value, aiApiKey: $('[name="aiApiKey"]', p).value, aiPrompt: $('[name="aiPrompt"]', p).value }); closeTranslateSettings(); });
+
     $$('.pv-provider-tab', state.root).forEach(function(tab){ tab.addEventListener('click', function(){ var p = $('.pv-translate-panel', state.root); $('[name="provider"]', p).value = tab.dataset.provider || 'google'; $$('.pv-provider-tab', p).forEach(function(t){ t.classList.toggle('is-active', t === tab); }); p.classList.toggle('is-ai', tab.dataset.provider === 'ai'); }); });
     var viewer = $('.pv-viewer', state.root);
     $('.pv-viewer-close', viewer).addEventListener('click', closeViewer);
     viewer.addEventListener('pointerdown', function (e) { state.viewer.down = true; state.viewer.startX = e.clientX; state.viewer.startY = e.clientY; });
     viewer.addEventListener('pointerup', function (e) { if (!state.viewer.down) return; state.viewer.down = false; var dx = e.clientX - state.viewer.startX; var dy = e.clientY - state.viewer.startY; if (dy > 66 && Math.abs(dy) > Math.abs(dx)) closeViewer(); });
-    document.addEventListener('visibilitychange', function () { if (document.hidden) pauseSlide(state.index); else activateCurrent(false); });
+    document.addEventListener('visibilitychange', function () { if (document.hidden) softPauseSlide(state.index); else activateCurrent(); });
+
+    // 全局首次手势监听（捕获阶段，确保解锁优先于其他逻辑）
+    var firstGestureHandler = function (e) {
+      if (e.target.closest('input, textarea, select, .pv-comments-panel, .pv-compose-panel, .pv-translate-panel, .pv-viewer')) return;
+      if (!state.soundUnlocked) {
+        // 仅在 video slide 上触发
+        var slide = e.target.closest('.pv-slide-item.is-video.is-active');
+        if (slide) {
+          unlockSoundAndPlay();
+        }
+      }
+    };
+    state.root.addEventListener('pointerdown', firstGestureHandler, true);
   }
   function onRootClick(e) {
     var btn;
@@ -1080,18 +1159,19 @@
     if ((btn = e.target.closest('.pv-text-row'))) { if (!e.target.closest('.pv-translate-btn')) btn.classList.toggle('is-expanded'); }
   }
   function onRootPointerDown(e) {
-    if (!e.target.closest('input, textarea, select, .pv-comments-panel, .pv-compose-panel, .pv-translate-panel, .pv-viewer')) {
-      unlockSoundFromGesture();
-    }
     var textRow = e.target.closest('.pv-text-row');
     var translateBtn = e.target.closest('.pv-translate-btn, .pv-comment-translate');
     if (textRow || translateBtn) { clearTimeout(state.translateLongPressTimer); state.translateLongPressTimer = setTimeout(function () { openTranslateSettings(); }, 650); }
-    var tap = e.target.closest('.pv-tap-zone');
-    if (tap) { state.hasInteracted = true; }
+
     var panel = $('.pv-comments-panel', state.root);
     if (panel && panel.classList.contains('is-open') && e.target.closest('.pv-comments-panel') && !e.target.closest('input,button,.pv-voice-card')) {
-      var rect = panel.getBoundingClientRect(); var list = e.target.closest('.pv-comments-list');
-      state.comments.dragCandidate = true; state.comments.dragStartTopZone = true; state.comments.dragStartY = e.clientY; state.comments.dragY = 0;
+      var list = $('.pv-comments-list', state.root);
+      var atTop = !list || list.scrollTop <= 0;
+      var dragHead = !!e.target.closest('.pv-comments-drag, .pv-panel-grip');
+      state.comments.dragCandidate = true;
+      state.comments.dragStartTopZone = dragHead || atTop;
+      state.comments.dragStartY = e.clientY;
+      state.comments.dragY = 0;
     }
   }
   function onRootPointerMove(e) {
