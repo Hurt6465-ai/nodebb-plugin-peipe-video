@@ -1,4 +1,4 @@
-/* Peipe /video mobile discover page v7
+/* Peipe /video mobile discover page v8
    - Independent /video page, official NodeBB plugin backend feed only
    - Swiper vertical feed with virtual slides
    - TikTok official embed keeps official audio controls; no custom center play button
@@ -8,14 +8,14 @@
 (function () {
   'use strict';
 
-  if (window.__peipeVideoDiscoverV7) return;
-  window.__peipeVideoDiscoverV7 = true;
+  if (window.__peipeVideoDiscoverV8) return;
+  window.__peipeVideoDiscoverV8 = true;
 
   var CONFIG = Object.assign({
     cid: 6,
     pageSize: 12,
-    preloadAhead: 8,
-    preloadVideoAhead: 3,
+    preloadAhead: 14,
+    preloadVideoAhead: 5,
     imageMax: 4,
     coverCacheMs: 7 * 24 * 60 * 60 * 1000,
     translateCacheMs: 3 * 24 * 60 * 60 * 1000,
@@ -25,13 +25,13 @@
   }, window.PEIPE_VIDEO_CONFIG || {});
 
   var TEXT = {
-    loading: '发现加载中...',
+    loading: '视频内容源自 TikTok，版权归原作者及 TikTok 所有。\n如果无法播放请开启 VPN，如有侵权内容，请及时联系本站管理员删除。',
     empty: '还没有可浏览的内容',
     publish: '发布',
     publishing: '发布中...',
     publishOk: '发布成功',
     publishFail: '发布失败',
-    placeholder: '写点什么，或粘贴 TikTok 链接',
+    placeholder: '粘贴 TikTok 链接，一键转视频播放。也可以写点文字。',
     chooseImage: '图片',
     record: '语音',
     stop: '停止',
@@ -41,7 +41,7 @@
     uploadVoice: '上传语音',
     enterSomething: '请输入内容、TikTok 链接或图片',
     comments: '评论',
-    commentPlaceholder: '说点什么...',
+    commentPlaceholder: '发送消息...',
     replyTo: '回复',
     cancelReply: '取消回复',
     commentFail: '评论失败，可打开原帖评论',
@@ -71,8 +71,16 @@
     aiApiKey: '密钥',
     aiPrompt: '提示词',
     voicePreview: '语音评论',
-    recording: '录音中'
+    recording: '录音中',
+    manage: '管理',
+    deleteVideo: '删除视频',
+    deleteConfirm: '确定删除这条视频动态？',
+    deleteOk: '已删除',
+    deleteFail: '删除失败',
+    openOriginal: '查看原帖',
+    sourceNotice: '视频内容源自 TikTok，版权归原作者及 TikTok 所有。\n如果无法播放请开启 VPN，如有侵权内容，请及时联系本站管理员删除。'
   };
+  Object.assign(TEXT, window.PEIPE_VIDEO_TEXT || {});
 
   var RE = {
     tiktokGlobal: /https?:\/\/(?:www\.)?tiktok\.com\/@[^\/\s<>'"]+\/video\/(\d+)(?:\?[^\s<>'"]*)?/ig,
@@ -105,9 +113,10 @@
     },
     viewer: { images: [], index: 0, swiper: null, startX: 0, startY: 0, down: false },
     imageSwipers: new Map(),
-    soundUnlocked: !!safeJsonGet('pv-sound-unlocked', false),
+    soundUnlocked: false,
     comments: { item: null, posts: [], loading: false, replyTo: null, dragY: 0, dragStartY: 0, dragging: false, dragCandidate: false, dragStartTopZone: false, voiceBlob: null, voiceUrl: '', voiceDuration: 0, mediaRecorder: null, stream: null, chunks: [], startAt: 0, timer: 0 },
-    translateLongPressTimer: 0
+    translateLongPressTimer: 0,
+    manageItem: null
   };
 
   function $(sel, root) { return (root || document).querySelector(sel); }
@@ -191,7 +200,7 @@
   }
   function isAutoText(text) {
     var clean = norm(String(text || '').replace(/[•・·|｜_／/\\-]+/g, ' '));
-    return !clean || /^(?:新动态|图片分享|图片动态|语音消息|语音动态|voice message|audio message|image|photo|picture)(?:\s*:??\s*\d{1,2}:\d{2}(?::\d{2})?)?$/i.test(clean);
+    return !clean || /^https?:\/\/(?:vt|vm|www\.)?tiktok\./i.test(clean) || /^(?:动态|新动态|图片分享|图片动态|语音消息|语音动态|voice message|audio message|image|photo|picture)(?:\s*:??\s*\d{1,2}:\d{2}(?::\d{2})?)?$/i.test(clean);
   }
   function displayText(item) {
     return cleanDisplayText(item && (item.text || item.title || ''));
@@ -281,13 +290,15 @@
     state.swiper = new window.Swiper(el, {
       direction: 'vertical',
       slidesPerView: 1,
-      speed: 260,
-      threshold: 2,
+      speed: 300,
+      threshold: 0,
       touchStartPreventDefault: false,
       touchMoveStopPropagation: false,
       touchReleaseOnEdges: false,
-      resistanceRatio: 0.38,
-      longSwipesRatio: 0.12,
+      resistanceRatio: 0.22,
+      longSwipesRatio: 0.08,
+      shortSwipes: true,
+      touchAngle: 60,
       followFinger: true,
       watchSlidesProgress: true,
       preventClicks: false,
@@ -295,8 +306,8 @@
       passiveListeners: false,
       virtual: {
         enabled: true,
-        addSlidesBefore: 2,
-        addSlidesAfter: Math.max(10, CONFIG.preloadAhead + 4),
+        addSlidesBefore: 3,
+        addSlidesAfter: Math.max(18, CONFIG.preloadAhead + 6),
         slides: state.list.map(renderSlideHtml)
       },
       on: {
@@ -380,9 +391,10 @@
           '<button type="button" class="pv-action pv-like ' + (liked ? 'is-active' : '') + '" data-index="' + index + '"><span class="pv-action-icon">' + iconHeart(liked) + '</span><span>' + formatCount(item.counts.likes) + '</span></button>' +
           '<button type="button" class="pv-action pv-comment-btn" data-index="' + index + '"><span class="pv-action-icon">' + iconComment() + '</span><span>' + formatCount(item.counts.comments) + '</span></button>' +
           (images.length && hasVideo ? '<button type="button" class="pv-action pv-album-btn" data-index="' + index + '"><span class="pv-action-icon">' + iconPhoto() + '</span><span>' + images.length + '</span></button>' : '') +
+          ((item.viewer && item.viewer.canManage) ? '<button type="button" class="pv-action pv-manage-btn" data-index="' + index + '" aria-label="' + TEXT.manage + '"><span class="pv-action-icon">' + iconMore() + '</span></button>' : '') +
         '</div>' +
         '<div class="pv-desc">' +
-          '<a class="pv-username" href="' + authorHref(author) + '">@' + escapeHtml(author.username || author.userslug || '用户') + '</a>' +
+          '<span class="pv-username">@' + escapeHtml(author.username || author.userslug || '用户') + '</span>' +
           (hasText ? '<div class="pv-text-row" data-index="' + index + '"><span class="pv-text-main">' + escapeHtml(text) + '</span> <button type="button" class="pv-translate-btn" data-index="' + index + '" aria-label="' + TEXT.translate + '" title="' + TEXT.translate + '">' + iconTranslate() + '</button></div><div class="pv-translated"></div>' : '') +
           '<div class="pv-time">' + relativeTime(item.createdAt) + '</div>' +
         '</div>' +
@@ -394,6 +406,7 @@
   function iconMic() { return '<svg class="pv-mic-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3z"></path><path d="M5 11a7 7 0 0 0 14 0M12 18v3m-4 0h8"></path></svg>'; }
   function iconSend() { return '<svg class="pv-send-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h14M13 6l6 6-6 6"></path></svg>'; }
   function iconPhoto() { return '<svg viewBox="0 0 48 48" aria-hidden="true"><path d="M10 10h28a4 4 0 0 1 4 4v20a4 4 0 0 1-4 4H10a4 4 0 0 1-4-4V14a4 4 0 0 1 4-4zm5 23h18l-6-8-4 5-3-4-5 7zm2-13a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"></path></svg>'; }
+  function iconMore() { return '<svg class="pv-more-svg" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="2"></circle><circle cx="12" cy="12" r="2"></circle><circle cx="19" cy="12" r="2"></circle></svg>'; }
   function getImageIndex(item) {
     var key = String(item && (item.tid || item.pid || state.list.indexOf(item)) || '');
     return Math.max(0, Number(state.imageIndex.get(key) || 0));
@@ -508,7 +521,7 @@
   function preloadNextVideos(fromIndex) {
     var found = 0;
     var maxScan = Math.min(state.list.length - 1, fromIndex + Math.max(12, CONFIG.preloadAhead + 8));
-    for (var i = Math.max(0, fromIndex); i <= maxScan && found < (CONFIG.preloadVideoAhead || 3); i += 1) {
+    for (var i = Math.max(0, fromIndex); i <= maxScan && found < (CONFIG.preloadVideoAhead || 5); i += 1) {
       var it = state.list[i];
       if (it && it.tiktoks && it.tiktoks[0]) {
         prepareSlide(i, i === state.index && (state.hasInteracted || state.soundUnlocked));
@@ -563,7 +576,6 @@
     setTimeout(function () { sendToPlayer(player.iframe, 'play'); sendToPlayer(player.iframe, 'unMute'); }, 80);
     setTimeout(function () { sendToPlayer(player.iframe, 'unMute'); sendToPlayer(player.iframe, 'play'); }, 260);
     setTimeout(function () { sendToPlayer(player.iframe, 'unMute'); sendToPlayer(player.iframe, 'play'); }, 720);
-    setTimeout(function () { if (player.wantPlay && player.status !== 'playing') markSlidePlaying(index); }, 1800);
   }
   function pauseSlide(index) {
     state.players.forEach(function (p) {
@@ -616,6 +628,12 @@
       if (data.type === 'onPlayerReady') {
         player.ready = true;
         if (player.wantPlay) { sendToPlayer(player.iframe, 'unMute'); sendToPlayer(player.iframe, 'play'); }
+        return;
+      }
+      if (data.type === 'onMute' || data.type === 'onVolumeChange' || String(data.type || '').toLowerCase().indexOf('mute') !== -1) {
+        if (data.value === false || data.value === 0 || String(data.value).toLowerCase() === 'false' || String(data.value).toLowerCase() === 'unmuted') {
+          state.soundUnlocked = true; state.hasInteracted = true; safeJsonSet('pv-sound-unlocked', true);
+        }
         return;
       }
       if (data.type === 'onStateChange') {
@@ -924,6 +942,40 @@
   function translateComment(commentEl) { var text = $('.pv-comment-text', commentEl); var box = $('.pv-comment-translated', commentEl); if (!text || !box) return; translateElementText(text.textContent || '', box); }
   function translateCommentInput() { var input = $('.pv-comment-input', state.root); var text = norm(input.value); if (!text) return; translateText(text).then(function (out) { if (out) { input.value = out; updateCommentActionButton(); } }).catch(function () { alertError(TEXT.translateFail); }); }
 
+
+  function openManagePanel(item) {
+    if (!item) return;
+    state.manageItem = item;
+    var panel = $('.pv-manage-panel', state.root);
+    $('.pv-modal-backdrop', state.root).classList.add('is-open');
+    panel.classList.add('is-open');
+  }
+  function closeManagePanel() {
+    state.manageItem = null;
+    var panel = $('.pv-manage-panel', state.root);
+    if (panel) panel.classList.remove('is-open');
+    var backdrop = $('.pv-modal-backdrop', state.root);
+    if (backdrop && !$('.pv-translate-panel', state.root).classList.contains('is-open')) backdrop.classList.remove('is-open');
+  }
+  function deleteManagedVideo() {
+    var item = state.manageItem;
+    if (!item || !item.tid) return;
+    if (!window.confirm(TEXT.deleteConfirm)) return;
+    apiFetch('/api/v3/plugins/peipe-video/topics/' + encodeURIComponent(item.tid), { method: 'DELETE', headers: { 'x-csrf-token': csrfToken() } })
+      .then(function(){
+        closeManagePanel(); alertSuccess(TEXT.deleteOk);
+        state.list = state.list.filter(function(x){ return String(x.tid) !== String(item.tid); });
+        updateSwiperSlides(true);
+      })
+      .catch(function(err){ console.warn(err); alertError(TEXT.deleteFail); });
+  }
+  function translateComposeText() {
+    var panel = $('.pv-compose-panel', state.root); var textarea = $('textarea', panel); var text = norm(textarea.value);
+    if (!text) return;
+    var old = textarea.value; textarea.disabled = true;
+    translateText(text).then(function(out){ if (out) textarea.value = out; }).catch(function(){ alertError(TEXT.translateFail); }).finally(function(){ textarea.disabled = false; textarea.focus(); if (!textarea.value) textarea.value = old; });
+  }
+
   function showComposeFabInitial() { var fab = $('.pv-compose-fab', state.root); if (!fab) return; fab.classList.remove('is-hidden'); }
   function hideComposerFab() { var fab = $('.pv-compose-fab', state.root); if (!fab) return; fab.classList.add('is-hidden'); }
   function openCompose() { pauseSlide(state.index); $('.pv-drawer-backdrop', state.root).classList.add('is-open'); $('.pv-compose-panel', state.root).classList.add('is-open'); hideComposerFab(); }
@@ -1010,12 +1062,13 @@
   function buildChrome() {
     state.root.innerHTML = '' +
       '<div class="pv-page pv-page-active">' +
-        '<div class="pv-swiper swiper"><div class="swiper-wrapper"></div></div>' +
+        '<div class="pv-swiper swiper"><div class="swiper-wrapper"></div></div><div class="pv-source-notice">' + escapeHtml(TEXT.sourceNotice).replace(/\n/g, '<br>') + '</div>' +
         '<button type="button" class="pv-compose-fab">+</button>' +
         '<div class="pv-drawer-backdrop"></div><div class="pv-modal-backdrop"></div>' +
-        '<section class="pv-compose-panel" role="dialog"><div class="pv-panel-head"><div class="pv-panel-title">' + TEXT.publish + '</div><button type="button" class="pv-close pv-compose-close">×</button></div><textarea placeholder="' + TEXT.placeholder + '"></textarea><div class="pv-preview-images"></div><div class="pv-compose-tools"><input type="file" class="pv-image-input" accept="image/*" multiple hidden><button type="button" class="pv-tool pv-image-btn">' + TEXT.chooseImage + '</button><button type="button" class="pv-primary pv-compose-submit">' + TEXT.send + '</button></div><div class="pv-meta"></div></section>' +
+        '<section class="pv-compose-panel" role="dialog"><div class="pv-panel-head"><div class="pv-panel-title">' + TEXT.publish + '</div><button type="button" class="pv-close pv-compose-close">×</button></div><textarea placeholder="' + TEXT.placeholder + '"></textarea><div class="pv-preview-images"></div><div class="pv-compose-tools"><input type="file" class="pv-image-input" accept="image/*" multiple hidden><button type="button" class="pv-tool pv-image-btn">' + TEXT.chooseImage + '</button><button type="button" class="pv-tool pv-compose-translate" aria-label="' + TEXT.translate + '">' + iconTranslate() + '</button><button type="button" class="pv-primary pv-compose-submit">' + TEXT.send + '</button></div><div class="pv-meta"></div></section>' +
         '<section class="pv-comments-panel" role="dialog"><div class="pv-panel-grip"></div><div class="pv-panel-head pv-comments-drag"><div class="pv-panel-title pv-comments-title">' + TEXT.comments + '</div><button type="button" class="pv-close pv-comments-close">×</button></div><div class="pv-comments-list"></div><div class="pv-reply-bar"><span>' + TEXT.replyTo + ' </span><b class="pv-reply-name"></b><button type="button" class="pv-reply-cancel">×</button></div><div class="pv-comment-voice-preview"></div><div class="pv-comment-record-panel"><div class="pv-record-pulse"></div><div class="pv-record-bars"><i></i><i></i><i></i><i></i><i></i></div><span class="pv-record-time">00:00</span><span class="pv-record-tip">正在录音，点右侧按钮停止</span></div><div class="pv-comment-send-row"><div class="pv-comment-input-wrap"><button type="button" class="pv-comment-input-translate" aria-label="' + TEXT.translate + '" title="' + TEXT.translate + '">' + iconTranslate() + '</button><input class="pv-comment-input" placeholder="' + TEXT.commentPlaceholder + '"><button type="button" class="pv-comment-action-btn" aria-label="语音或发送">' + iconMic() + '</button></div></div></section>' +
         '<section class="pv-translate-panel" role="dialog"><div class="pv-panel-head"><div class="pv-panel-title">' + TEXT.translateSettings + '</div><button type="button" class="pv-close pv-translate-close">×</button></div><div class="pv-provider-tabs"><button type="button" class="pv-provider-tab" data-provider="google">' + TEXT.google + '</button><button type="button" class="pv-provider-tab" data-provider="ai">' + TEXT.ai + '</button><input type="hidden" name="provider" value="google"></div><div class="pv-lang-row"><label><span>' + TEXT.sourceLang + '</span><select name="sourceLang">' + langOptions(true) + '</select></label><span class="pv-lang-arrow">⇄</span><label><span>' + TEXT.targetLang + '</span><select name="targetLang">' + langOptions(false) + '</select></label></div><div class="pv-ai-settings"><label>' + TEXT.aiEndpoint + '<input name="aiEndpoint" placeholder="https://api.example.com/v1"></label><label>' + TEXT.aiModel + '<input name="aiModel" placeholder="gpt-4.1-mini / qwen / deepseek"></label><label>' + TEXT.aiApiKey + '<input name="aiApiKey" type="password" placeholder="API Key"></label><label>' + TEXT.aiPrompt + '<textarea name="aiPrompt" rows="4"></textarea></label></div><div class="pv-translate-actions"><button type="button" class="pv-primary pv-translate-save">' + TEXT.save + '</button></div></section>' +
+        '<section class="pv-manage-panel" role="dialog"><button type="button" class="pv-manage-open-topic">' + TEXT.openOriginal + '</button><button type="button" class="pv-manage-delete">' + TEXT.deleteVideo + '</button><button type="button" class="pv-manage-cancel">取消</button></section>' +
         '<div class="pv-viewer"><div class="pv-viewer-swiper swiper"><div class="swiper-wrapper"></div><div class="pv-viewer-pagination"></div></div><button class="pv-viewer-close" aria-label="关闭">×</button></div>' +
       '</div>';
     bindChrome();
@@ -1049,6 +1102,7 @@
     $('.pv-image-btn', state.root).addEventListener('click', function () { $('.pv-image-input', state.root).click(); });
     $('.pv-image-input', state.root).addEventListener('change', function (e) { var files = Array.from(e.target.files || []).slice(0, CONFIG.imageMax); e.target.value = ''; if (files.find(function (f) { return !/^image\//i.test(f.type); })) return alertError(TEXT.imageOnly); compressImageFiles(files).then(setPendingImages); });
     $('.pv-compose-submit', state.root).addEventListener('click', sendTopic);
+    $('.pv-compose-translate', state.root).addEventListener('click', translateComposeText);
     $('.pv-comments-close', state.root).addEventListener('click', closeComments);
     $('.pv-reply-cancel', state.root).addEventListener('click', clearReplyTarget);
     $('.pv-comment-action-btn', state.root).addEventListener('click', handleCommentAction);
@@ -1056,9 +1110,12 @@
     $('.pv-comment-input-translate', state.root).addEventListener('click', translateCommentInput);
     bindLongPress($('.pv-comment-input-translate', state.root), openTranslateSettings);
     $('.pv-comment-input', state.root).addEventListener('input', updateCommentActionButton);
-    $('.pv-comment-input', state.root).addEventListener('keydown', function (e) { if (e.key === 'Enter') submitComment(); });
+    $('.pv-comment-input', state.root).addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); if (norm(e.currentTarget.value) || state.comments.voiceBlob) submitComment(); } });
     $('.pv-translate-close', state.root).addEventListener('click', closeTranslateSettings);
-    $('.pv-modal-backdrop', state.root).addEventListener('click', closeTranslateSettings);
+    $('.pv-modal-backdrop', state.root).addEventListener('click', function(){ closeTranslateSettings(); closeManagePanel(); });
+    $('.pv-manage-cancel', state.root).addEventListener('click', closeManagePanel);
+    $('.pv-manage-open-topic', state.root).addEventListener('click', function(){ var item = state.manageItem; if (item && item.href) location.href = rel(item.href); });
+    $('.pv-manage-delete', state.root).addEventListener('click', deleteManagedVideo);
     $('.pv-translate-save', state.root).addEventListener('click', function () { var p = $('.pv-translate-panel', state.root); safeJsonSet('pv-translate-settings', { provider: $('[name="provider"]', p).value, sourceLang: $('[name="sourceLang"]', p).value, targetLang: $('[name="targetLang"]', p).value, aiEndpoint: $('[name="aiEndpoint"]', p).value, aiModel: $('[name="aiModel"]', p).value, aiApiKey: $('[name="aiApiKey"]', p).value, aiPrompt: $('[name="aiPrompt"]', p).value }); closeTranslateSettings(); });
     $$('.pv-provider-tab', state.root).forEach(function(tab){ tab.addEventListener('click', function(){ var p = $('.pv-translate-panel', state.root); $('[name="provider"]', p).value = tab.dataset.provider || 'google'; $$('.pv-provider-tab', p).forEach(function(t){ t.classList.toggle('is-active', t === tab); }); p.classList.toggle('is-ai', tab.dataset.provider === 'ai'); }); });
     var viewer = $('.pv-viewer', state.root);
@@ -1074,6 +1131,7 @@
     if ((btn = e.target.closest('.pv-follow-plus'))) { e.preventDefault(); e.stopPropagation(); var idx = Number(btn.dataset.index); toggleFollow(state.list[idx], findSlide(idx)); return; }
     if ((btn = e.target.closest('.pv-translate-btn'))) { e.preventDefault(); e.stopPropagation(); var ti = Number(btn.dataset.index); translateSlide(state.list[ti], findSlide(ti)); return; }
     if ((btn = e.target.closest('.pv-album-btn'))) { e.preventDefault(); e.stopPropagation(); var pi = Number(btn.dataset.index); openViewer(state.list[pi].images || [], 0); return; }
+    if ((btn = e.target.closest('.pv-manage-btn'))) { e.preventDefault(); e.stopPropagation(); openManagePanel(state.list[Number(btn.dataset.index)]); return; }
     if ((btn = e.target.closest('.pv-voice-card'))) { e.preventDefault(); e.stopPropagation(); toggleVoiceCard(btn); return; }
     if ((btn = e.target.closest('.pv-comment-reply'))) { e.preventDefault(); e.stopPropagation(); setReplyTarget(e.target.closest('.pv-comment')); return; }
     if ((btn = e.target.closest('.pv-comment-translate'))) { e.preventDefault(); e.stopPropagation(); translateComment(e.target.closest('.pv-comment')); return; }
