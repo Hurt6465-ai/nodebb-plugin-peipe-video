@@ -3,7 +3,7 @@
   "url": "https://peipe.local/nodebb-plugin-peipe-video",
   "name": "Peipe Video Discover",
   "description": "Official NodeBB-style /video discover page with cached cid 6 feed aggregation.",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "library": "./library.js",
   "staticDirs": {
     "static": "./static"
