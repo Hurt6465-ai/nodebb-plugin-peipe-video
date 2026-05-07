@@ -297,6 +297,10 @@ function invalidateFeedCaches() {
   deleteCachePrefix('counts:');
 }
 
+plugin.clearCaches = async function clearCaches() {
+  invalidateFeedCaches();
+};
+
 plugin.init = async function init(params) {
   const { router } = params;
   routeHelpers.setupPageRoute(router, '/video', [], (req, res) => {
@@ -330,3 +334,4 @@ plugin.addRoutes = async function addRoutes({ router, middleware, helpers }) {
 };
 
 module.exports = plugin;
+
