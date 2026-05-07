@@ -1,4 +1,4 @@
-/* Peipe /video mobile discover page v4
+/* Peipe /video mobile discover page v5
    - Independent /video page, official NodeBB plugin backend feed only
    - Swiper vertical feed with virtual slides
    - TikTok official embed keeps official audio controls; no custom center play button
@@ -8,8 +8,8 @@
 (function () {
   'use strict';
 
-  if (window.__peipeVideoDiscoverV4) return;
-  window.__peipeVideoDiscoverV4 = true;
+  if (window.__peipeVideoDiscoverV5) return;
+  window.__peipeVideoDiscoverV5 = true;
 
   var CONFIG = Object.assign({
     cid: 6,
@@ -61,7 +61,16 @@
     save: '保存',
     auto: '自动',
     voiceMsg: '语音消息',
-    noComments: '暂无评论'
+    noComments: '暂无评论',
+    provider: '翻译方式',
+    google: '谷歌翻译',
+    ai: 'AI翻译',
+    aiEndpoint: 'AI 接口',
+    aiModel: '模型',
+    aiApiKey: '密钥',
+    aiPrompt: '提示词',
+    voicePreview: '语音评论',
+    recording: '录音中'
   };
 
   var RE = {
@@ -98,7 +107,7 @@
     viewer: { images: [], index: 0, swiper: null, startX: 0, startY: 0, down: false },
     imageSwipers: new Map(),
     soundUnlocked: false,
-    comments: { item: null, posts: [], loading: false, replyTo: null, dragY: 0, dragStartY: 0, dragging: false },
+    comments: { item: null, posts: [], loading: false, replyTo: null, dragY: 0, dragStartY: 0, dragging: false, dragCandidate: false, dragStartTopZone: false, voiceBlob: null, voiceUrl: '', voiceDuration: 0, mediaRecorder: null, stream: null, chunks: [], startAt: 0, timer: 0 },
     translateLongPressTimer: 0
   };
 
@@ -370,13 +379,13 @@
         '</div>' +
         '<div class="pv-desc">' +
           '<a class="pv-username" href="' + authorHref(author) + '">@' + escapeHtml(author.username || author.userslug || '用户') + '</a>' +
-          (hasText ? '<div class="pv-text-row" data-index="' + index + '"><span class="pv-text-main">' + escapeHtml(text) + '</span><button type="button" class="pv-translate-btn" data-index="' + index + '">' + TEXT.translate + '</button></div><div class="pv-translated"></div>' : '') +
+          (hasText ? '<div class="pv-text-row" data-index="' + index + '"><span class="pv-text-main">' + escapeHtml(text) + '</span></div><button type="button" class="pv-translate-btn" data-index="' + index + '">' + TEXT.translate + '</button><div class="pv-translated"></div>' : '') +
           '<div class="pv-time">' + relativeTime(item.createdAt) + '</div>' +
         '</div>' +
       '</section>';
   }
   function iconHeart(active) { return '<svg viewBox="0 0 48 48" aria-hidden="true"><path d="M24 41s-2.2-1.3-5.2-3.4C10.2 31.4 5 25.8 5 18.6 5 12.7 9.5 8 15.2 8c3.5 0 6.6 1.8 8.8 4.7C26.2 9.8 29.3 8 32.8 8 38.5 8 43 12.7 43 18.6c0 7.2-5.2 12.8-13.8 19C26.2 39.7 24 41 24 41z"></path></svg>'; }
-  function iconComment() { return '<svg viewBox="0 0 48 48" aria-hidden="true"><path d="M9 11.5A17.5 17.5 0 0 1 26.5 6h1A17.5 17.5 0 0 1 45 23.5v.5A17.5 17.5 0 0 1 27.5 41h-1.9c-3.4 0-6.6-.9-9.3-2.5L7.5 41c-.9.3-1.7-.5-1.4-1.4l2.5-8.5A17.2 17.2 0 0 1 9 24v-.5z"></path></svg>'; }
+  function iconComment() { return '<svg viewBox="0 0 48 48" aria-hidden="true"><path d="M24 8C14.6 8 7 14.7 7 23c0 4.9 2.7 9.3 6.9 12l-.9 5.2c-.1.8.7 1.4 1.4.9l5.6-3.3c1.3.2 2.6.3 4 .3 9.4 0 17-6.7 17-15S33.4 8 24 8zm-7 17a2.4 2.4 0 1 1 0-4.8A2.4 2.4 0 0 1 17 25zm7 0a2.4 2.4 0 1 1 0-4.8A2.4 2.4 0 0 1 24 25zm7 0a2.4 2.4 0 1 1 0-4.8A2.4 2.4 0 0 1 31 25z"></path></svg>'; }
   function iconPhoto() { return '<svg viewBox="0 0 48 48" aria-hidden="true"><path d="M10 10h28a4 4 0 0 1 4 4v20a4 4 0 0 1-4 4H10a4 4 0 0 1-4-4V14a4 4 0 0 1 4-4zm5 23h18l-6-8-4 5-3-4-5 7zm2-13a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"></path></svg>'; }
   function getImageIndex(item) {
     var key = String(item && (item.tid || item.pid || state.list.indexOf(item)) || '');
@@ -500,6 +509,18 @@
     if (arguments.length >= 3) msg.value = value;
     iframe.contentWindow.postMessage(msg, '*');
   }
+  function hardStopPlayer(player) {
+    if (!player || !player.iframe) return;
+    sendToPlayer(player.iframe, 'pause');
+    setTimeout(function () { sendToPlayer(player.iframe, 'pause'); }, 60);
+    setTimeout(function () {
+      if (!player || !player.iframe || player.index === state.index) return;
+      try { player.iframe.src = 'about:blank'; } catch (e) {}
+      player.ready = false;
+      player.status = 'paused';
+      player.wantPlay = false;
+    }, 180);
+  }
   function playSlide(index, userGesture) {
     var item = state.list[index];
     if (!item || !(item.tiktoks && item.tiktoks[0])) return;
@@ -509,7 +530,6 @@
     pauseOtherPlayers(player.key);
     var slide = findSlide(index);
     if (slide) slide.classList.add('is-loading');
-    if ((userGesture || state.soundUnlocked) && player.iframe.src.indexOf('autoplay=1') === -1) player.iframe.src = buildPlayerUrl(player.videoId, true);
     if (userGesture) state.soundUnlocked = true;
     sendToPlayer(player.iframe, 'unMute');
     sendToPlayer(player.iframe, 'play');
@@ -520,7 +540,7 @@
     state.players.forEach(function (p) {
       if (p.index !== index) return;
       p.wantPlay = false; p.status = 'paused';
-      if (p.iframe) { sendToPlayer(p.iframe, 'pause'); setTimeout(function(){ sendToPlayer(p.iframe, 'pause'); }, 80); }
+      hardStopPlayer(p);
     });
     var slide = findSlide(index);
     if (slide) slide.classList.remove('is-playing', 'is-loading');
@@ -528,8 +548,13 @@
   function pauseOtherPlayers(currentKey) {
     state.players.forEach(function (p, key) {
       if (key === currentKey) return;
+      var wasActive = p.wantPlay || p.status === 'playing' || Math.abs(p.index - state.index) > CONFIG.preloadAhead;
       p.wantPlay = false; p.status = 'paused';
-      if (p.iframe) { sendToPlayer(p.iframe, 'pause'); setTimeout(function(){ sendToPlayer(p.iframe, 'pause'); }, 80); }
+      if (p.iframe) {
+        sendToPlayer(p.iframe, 'pause');
+        setTimeout(function(){ sendToPlayer(p.iframe, 'pause'); }, 80);
+        if (wasActive) hardStopPlayer(p);
+      }
       var slide = findSlide(p.index);
       if (slide) slide.classList.remove('is-playing', 'is-loading');
     });
@@ -634,23 +659,72 @@
   }
   function updateFollowUi(slide, following) { var btn = $('.pv-follow-plus', slide); if (!btn) return; btn.classList.toggle('is-following', !!following); btn.textContent = following ? '✓' : '+'; }
 
-  function getTranslateSettings() {
-    return Object.assign({ sourceLang: 'auto', targetLang: (navigator.language || 'zh-CN').split('-')[0] || 'zh' }, safeJsonGet('pv-translate-settings', {}));
+  var LANGUAGE_META = {
+    auto: { flag: '🌐', label: '自动检测' },
+    zh: { flag: '🇨🇳', label: '中文' }, en: { flag: '🇺🇸', label: 'English' },
+    my: { flag: '🇲🇲', label: 'မြန်မာ' }, mm: { flag: '🇲🇲', label: 'မြန်မာ' },
+    th: { flag: '🇹🇭', label: 'ไทย' }, vi: { flag: '🇻🇳', label: 'Tiếng Việt' },
+    km: { flag: '🇰🇭', label: 'ភាសាខ្មែរ' }, lo: { flag: '🇱🇦', label: 'ລາວ' },
+    ja: { flag: '🇯🇵', label: '日本語' }, ko: { flag: '🇰🇷', label: '한국어' },
+    ms: { flag: '🇲🇾', label: 'Malay' }, tl: { flag: '🇵🇭', label: 'Tagalog' },
+    id: { flag: '🇮🇩', label: 'Indonesia' }, fr: { flag: '🇫🇷', label: 'Français' },
+    de: { flag: '🇩🇪', label: 'Deutsch' }, es: { flag: '🇪🇸', label: 'Español' }, ru: { flag: '🇷🇺', label: 'Русский' }
+  };
+  var DEFAULT_AI_PROMPT = '你是专业论坛翻译助手。请把用户提供的内容从 {{sourceLang}} 翻译为 {{targetLang}}。保留原有语气、换行、链接、用户名、表情和列表结构。只输出译文，不要解释。';
+  function normalizeLang(code, fallback) { code = norm(code).toLowerCase().replace(/_/g, '-'); if (!code) return fallback || 'auto'; var short = code.split('-')[0]; return LANGUAGE_META[code] ? code : (LANGUAGE_META[short] ? short : (fallback || code)); }
+  function langOptions(includeAuto) {
+    var arr = includeAuto ? ['auto','zh','en','my','th','vi','km','lo','ja','ko','ms','tl','id','fr','de','es','ru'] : ['zh','en','my','th','vi','km','lo','ja','ko','ms','tl','id','fr','de','es','ru'];
+    return arr.map(function (code) { var m = LANGUAGE_META[code] || { label: code, flag: '🏳️' }; return '<option value="' + code + '">' + m.flag + ' ' + m.label + '</option>'; }).join('');
   }
-  function translateCacheKey(text) { var s = getTranslateSettings(); return 'pv-tr:' + s.sourceLang + ':' + s.targetLang + ':' + encodeURIComponent(norm(text)).slice(0, 240); }
+  function getTranslateSettings() {
+    var saved = safeJsonGet('pv-translate-settings', {}) || {};
+    return {
+      provider: saved.provider === 'ai' ? 'ai' : 'google',
+      sourceLang: normalizeLang(saved.sourceLang, 'auto'),
+      targetLang: normalizeLang(saved.targetLang, (navigator.language || 'zh').split('-')[0] || 'zh'),
+      aiEndpoint: saved.aiEndpoint || '',
+      aiModel: saved.aiModel || '',
+      aiApiKey: saved.aiApiKey || '',
+      aiPrompt: saved.aiPrompt || DEFAULT_AI_PROMPT,
+      temperature: Number.isFinite(Number(saved.temperature)) ? Number(saved.temperature) : 0.3
+    };
+  }
+  function translateCacheKey(text) { var s = getTranslateSettings(); return 'pv-tr:' + s.provider + ':' + (s.aiModel || 'google') + ':' + s.sourceLang + ':' + s.targetLang + ':' + encodeURIComponent(norm(text)).slice(0, 240); }
+  function normalizeAiEndpoint(url) { url = norm(url); if (!url) return ''; if (/\/(chat\/completions|responses)$/i.test(url)) return url; return url.replace(/\/+$/, '') + '/chat/completions'; }
+  function extractAiText(data) {
+    if (data && Array.isArray(data.choices) && data.choices[0] && data.choices[0].message) {
+      var c = data.choices[0].message.content;
+      if (typeof c === 'string') return norm(c);
+      if (Array.isArray(c)) return norm(c.map(function (p) { return p && (p.text || p.output_text || '') || ''; }).join(''));
+    }
+    if (data && typeof data.output_text === 'string') return norm(data.output_text);
+    return '';
+  }
+  function translateViaAI(text, settings) {
+    if (!settings.aiEndpoint || !settings.aiModel || !settings.aiApiKey) return Promise.reject(new Error('AI translate not configured'));
+    var prompt = String(settings.aiPrompt || DEFAULT_AI_PROMPT).replace(/{{\s*sourceLang\s*}}/gi, settings.sourceLang || 'auto').replace(/{{\s*targetLang\s*}}/gi, settings.targetLang || 'zh');
+    return fetch(normalizeAiEndpoint(settings.aiEndpoint), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + settings.aiApiKey },
+      body: JSON.stringify({ model: settings.aiModel, temperature: settings.temperature, messages: [{ role: 'system', content: prompt }, { role: 'user', content: text }] })
+    }).then(function (res) { return res.json().catch(function () { return {}; }).then(function (json) { if (!res.ok) throw new Error(json.error && json.error.message || 'AI translate failed'); return json; }); })
+      .then(function (json) { var out = extractAiText(json); if (!out) throw new Error('empty AI translation'); return out; });
+  }
+  function translateViaGoogle(text, settings) {
+    var url = 'https://translate.googleapis.com/translate_a/single?' + new URLSearchParams({ client: 'gtx', sl: settings.sourceLang || 'auto', tl: settings.targetLang || 'zh', dt: 't', q: text }).toString();
+    return fetch(url, { credentials: 'omit', cache: 'force-cache' }).then(function (res) { if (!res.ok) throw new Error('translate ' + res.status); return res.json(); }).then(function (data) {
+      var parts = Array.isArray(data && data[0]) ? data[0] : [];
+      return norm(parts.map(function (p) { return p && p[0] ? p[0] : ''; }).join(''));
+    });
+  }
   function translateText(text) {
     var clean = cleanDisplayText(text).replace(/https?:\/\/\S+/g, '').trim();
     if (!clean) return Promise.resolve('');
     var key = translateCacheKey(clean); var cached = safeJsonGet(key, null);
     if (cached && cached.expiresAt > Date.now()) return Promise.resolve(cached.text || '');
     var settings = getTranslateSettings();
-    var url = 'https://translate.googleapis.com/translate_a/single?' + new URLSearchParams({ client: 'gtx', sl: settings.sourceLang || 'auto', tl: settings.targetLang || 'zh', dt: 't', q: clean }).toString();
-    return fetch(url, { credentials: 'omit', cache: 'force-cache' }).then(function (res) { if (!res.ok) throw new Error('translate ' + res.status); return res.json(); }).then(function (data) {
-      var parts = Array.isArray(data && data[0]) ? data[0] : [];
-      var out = parts.map(function (p) { return p && p[0] ? p[0] : ''; }).join(''); out = norm(out);
-      if (out) safeJsonSet(key, { text: out, expiresAt: Date.now() + CONFIG.translateCacheMs });
-      return out;
-    });
+    var p = settings.provider === 'ai' ? translateViaAI(clean, settings) : translateViaGoogle(clean, settings);
+    return p.then(function (out) { out = norm(out); if (out) safeJsonSet(key, { text: out, expiresAt: Date.now() + CONFIG.translateCacheMs }); return out; });
   }
   function translateSlide(item, slide) {
     var box = $('.pv-translated', slide); if (!box) return;
@@ -664,7 +738,10 @@
   }
   function openTranslateSettings() {
     var panel = $('.pv-translate-panel', state.root); var backdrop = $('.pv-modal-backdrop', state.root); var s = getTranslateSettings();
-    $('[name="sourceLang"]', panel).value = s.sourceLang || 'auto'; $('[name="targetLang"]', panel).value = s.targetLang || 'zh'; panel.classList.add('is-open'); backdrop.classList.add('is-open');
+    $('[name="sourceLang"]', panel).value = s.sourceLang || 'auto'; $('[name="targetLang"]', panel).value = s.targetLang || 'zh'; $('[name="provider"]', panel).value = s.provider || 'google';
+    $('[name="aiEndpoint"]', panel).value = s.aiEndpoint || ''; $('[name="aiModel"]', panel).value = s.aiModel || ''; $('[name="aiApiKey"]', panel).value = s.aiApiKey || ''; $('[name="aiPrompt"]', panel).value = s.aiPrompt || DEFAULT_AI_PROMPT;
+    panel.classList.toggle('is-ai', s.provider === 'ai');
+    panel.classList.add('is-open'); backdrop.classList.add('is-open');
   }
   function closeTranslateSettings() { $('.pv-translate-panel', state.root).classList.remove('is-open'); $('.pv-modal-backdrop', state.root).classList.remove('is-open'); }
 
@@ -694,6 +771,27 @@
   function closeViewer() { $('.pv-viewer', state.root).classList.remove('is-open'); }
   function moveViewer(delta) { if (state.viewer.swiper) state.viewer.swiper.slideTo(Math.max(0, Math.min(state.viewer.images.length - 1, state.viewer.index + delta))); }
 
+  function isAudioHref(href) { return RE.audioExt.test(String(href || '').split('?')[0]) || /[?&](?:haa8dur|dur|duration)=/i.test(String(href || '')); }
+  function parseDurationFromUrl(url) { try { var u = new URL(String(url || ''), location.origin); var raw = u.searchParams.get('haa8dur') || u.searchParams.get('dur') || u.searchParams.get('duration'); return Math.max(0, Number(raw || 0) || 0); } catch (e) { var m = String(url || '').match(/[?&](?:haa8dur|dur|duration)=(\d+(?:\.\d+)?)/i); return m ? Number(m[1]) || 0 : 0; } }
+  function extractAudiosFromContent(content) {
+    var out = []; var raw = String(content || '');
+    raw.replace(/<a[^>]+href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/ig, function (m, href, label) { if (isAudioHref(href) && !out.some(function (a) { return a.url === href; })) out.push({ url: href, label: norm(label.replace(/<[^>]*>/g, '')) || TEXT.voiceMsg }); return m; });
+    raw.replace(/\[([^\]]*)\]\(([^)]+)\)/g, function (m, label, href) { if (isAudioHref(href) && !out.some(function (a) { return a.url === href; })) out.push({ url: href, label: norm(label) || TEXT.voiceMsg }); return m; });
+    return out;
+  }
+  function voiceBars() { return [9,14,19,11,22,16,12,20,10,17,13,18].map(function (h) { return '<i style="height:' + h + 'px"></i>'; }).join(''); }
+  function renderVoiceCard(audio, cls) { var dur = parseDurationFromUrl(audio.url); return '<button type="button" class="pv-voice-card ' + (cls || '') + '" data-src="' + escapeHtml(audio.url) + '" data-duration="' + dur + '"><span class="pv-voice-play">▶</span><span class="pv-voice-wave">' + voiceBars() + '</span><span class="pv-voice-time">' + formatDuration(dur) + '</span></button>'; }
+  function toggleVoiceCard(card) {
+    if (!card) return; var src = card.dataset.src; if (!src) return;
+    var audio = card._pvAudio || new Audio(src); card._pvAudio = audio; audio.preload = 'metadata';
+    $$('.pv-voice-card.playing', state.root).forEach(function (node) { if (node !== card && node._pvAudio) { node._pvAudio.pause(); node.classList.remove('playing'); $('.pv-voice-play', node).textContent = '▶'; } });
+    audio.onloadedmetadata = function () { if (audio.duration && isFinite(audio.duration)) $('.pv-voice-time', card).textContent = formatDuration(audio.duration); };
+    audio.ontimeupdate = function () { if (!audio.paused) $('.pv-voice-time', card).textContent = formatDuration(audio.currentTime); };
+    audio.onended = function () { card.classList.remove('playing'); $('.pv-voice-play', card).textContent = '▶'; audio.currentTime = 0; };
+    if (audio.paused) { audio.play().then(function () { card.classList.add('playing'); $('.pv-voice-play', card).textContent = '❚❚'; }).catch(function () {}); }
+    else { audio.pause(); card.classList.remove('playing'); $('.pv-voice-play', card).textContent = '▶'; }
+  }
+
   function openComments(item) {
     state.comments.item = item; state.comments.replyTo = null;
     var panel = $('.pv-comments-panel', state.root);
@@ -708,16 +806,17 @@
       renderComments(posts);
     }).catch(function () { $('.pv-comments-list', panel).innerHTML = '<div class="pv-meta">加载失败，<a href="' + item.href + '">' + TEXT.openTopic + '</a></div>'; });
   }
-  function closeComments() { $('.pv-comments-panel', state.root).classList.remove('is-open'); $('.pv-drawer-backdrop', state.root).classList.remove('is-open'); }
+  function closeComments() { stopCommentRecording(true); setCommentVoice(null, 0); $('.pv-comments-panel', state.root).classList.remove('is-open'); $('.pv-drawer-backdrop', state.root).classList.remove('is-open'); }
   function renderComments(posts) {
     var list = $('.pv-comments-list', state.root);
     if (!posts.length) { list.innerHTML = '<div class="pv-meta pv-empty-comments">' + TEXT.noComments + '</div>'; return; }
     list.innerHTML = posts.map(function (post) {
       var user = normalizeAuthor(post.user || post, {}); var content = post.content || post.raw || '';
-      var div = document.createElement('div'); div.innerHTML = content; var text = cleanDisplayText(div.textContent || content);
+      var div = document.createElement('div'); div.innerHTML = content; var text = cleanDisplayText(div.textContent || content); var audios = extractAudiosFromContent(content);
       var avatar = user.picture ? '<img src="' + escapeHtml(user.picture) + '" alt="avatar">' : '<img alt="avatar">';
       var pid = String(post.pid || '');
-      return '<div class="pv-comment" data-pid="' + escapeHtml(pid) + '" data-username="' + escapeHtml(user.username || '用户') + '">' + avatar + '<div class="pv-comment-body"><div class="pv-comment-name">' + escapeHtml(user.username || '用户') + '</div><div class="pv-comment-text">' + escapeHtml(text) + '</div><div class="pv-comment-translated"></div><div class="pv-comment-actions"><button type="button" class="pv-comment-reply">' + TEXT.replyTo + '</button><button type="button" class="pv-comment-translate">' + TEXT.translate + '</button></div></div></div>';
+      var audioHtml = audios.map(function (a) { return renderVoiceCard(a, ''); }).join('');
+      return '<div class="pv-comment" data-pid="' + escapeHtml(pid) + '" data-username="' + escapeHtml(user.username || '用户') + '">' + avatar + '<div class="pv-comment-body"><div class="pv-comment-name">' + escapeHtml(user.username || '用户') + '</div>' + (text ? '<div class="pv-comment-text">' + escapeHtml(text) + '</div>' : '') + audioHtml + '<div class="pv-comment-translated"></div><div class="pv-comment-actions"><button type="button" class="pv-comment-reply">' + TEXT.replyTo + '</button><button type="button" class="pv-comment-translate">' + TEXT.translate + '</button></div></div></div>';
     }).join('');
   }
   function normalizeAuthor(user, fallback) {
@@ -737,15 +836,45 @@
     $('.pv-comment-input', panel).focus();
   }
   function clearReplyTarget() { state.comments.replyTo = null; var panel = $('.pv-comments-panel', state.root); $('.pv-reply-bar', panel).classList.remove('is-open'); $('.pv-comment-input', panel).placeholder = TEXT.commentPlaceholder; }
+  function setCommentVoice(blob, duration) {
+    if (state.comments.voiceUrl) { try { URL.revokeObjectURL(state.comments.voiceUrl); } catch (e) {} }
+    state.comments.voiceBlob = blob || null;
+    state.comments.voiceDuration = Math.max(0, Math.round(Number(duration) || 0));
+    state.comments.voiceUrl = blob ? URL.createObjectURL(blob) : '';
+    var wrap = $('.pv-comment-voice-preview', state.root);
+    if (!wrap) return;
+    wrap.innerHTML = blob ? renderVoiceCard({ url: state.comments.voiceUrl }, 'is-preview') + '<button type="button" class="pv-comment-voice-remove">×</button>' : '';
+    wrap.classList.toggle('is-open', !!blob);
+  }
+  function toggleCommentRecording() {
+    var btn = $('.pv-comment-voice-btn', state.root);
+    if (state.comments.mediaRecorder && state.comments.mediaRecorder.state === 'recording') { stopCommentRecording(false); return; }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) return alertError('当前浏览器不支持录音');
+    navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } }).then(function (stream) {
+      state.comments.stream = stream; state.comments.chunks = []; state.comments.startAt = Date.now();
+      var mime = recorderMime(); var rec = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 16000 } : { audioBitsPerSecond: 16000 }); state.comments.mediaRecorder = rec;
+      rec.ondataavailable = function (e) { if (e.data && e.data.size) state.comments.chunks.push(e.data); };
+      rec.onstop = function () { var dur = Math.max(1, Math.round((Date.now() - state.comments.startAt) / 1000)); if (state.comments.stream) state.comments.stream.getTracks().forEach(function (t) { t.stop(); }); clearInterval(state.comments.timer); btn.classList.remove('recording'); btn.textContent = '🎙'; if (state.comments.chunks.length) setCommentVoice(new Blob(state.comments.chunks, { type: state.comments.chunks[0].type || mime || 'audio/webm' }), dur); };
+      rec.start(250); btn.classList.add('recording'); btn.textContent = '■'; state.comments.timer = setInterval(function () {}, 500);
+    }).catch(function () { alertError('麦克风权限未开启'); });
+  }
+  function stopCommentRecording() { var rec = state.comments.mediaRecorder; if (rec && rec.state === 'recording') { try { rec.stop(); } catch (e) {} } if (state.comments.stream) state.comments.stream.getTracks().forEach(function (t) { t.stop(); }); clearInterval(state.comments.timer); }
+
   function submitComment() {
     var item = state.comments.item; var input = $('.pv-comment-input', state.root); var text = norm(input.value);
-    if (!item || !text) return; if (!isLoggedIn()) return alertError(TEXT.loginFirst);
+    if (!item || (!text && !state.comments.voiceBlob)) return; if (!isLoggedIn()) return alertError(TEXT.loginFirst);
     var btn = $('.pv-comment-submit', state.root); btn.disabled = true;
-    var content = state.comments.replyTo ? ('@' + state.comments.replyTo.username + ' ' + text) : text;
-    var payload = { content: content };
-    if (state.comments.replyTo && state.comments.replyTo.pid) payload.toPid = state.comments.replyTo.pid;
-    apiFetch('/api/v3/topics/' + encodeURIComponent(item.tid), { method: 'POST', headers: { 'content-type': 'application/json; charset=utf-8', 'x-csrf-token': csrfToken() }, body: JSON.stringify(payload) })
-      .then(function () { input.value = ''; clearReplyTarget(); item.counts.comments += 1; updateCountUi(item); openComments(item); })
+    Promise.resolve().then(function () {
+      var content = state.comments.replyTo ? ('@' + state.comments.replyTo.username + ' ' + text) : text;
+      if (!state.comments.voiceBlob) return content;
+      var ext = /ogg/i.test(state.comments.voiceBlob.type) ? 'ogg' : 'webm';
+      var file = new File([state.comments.voiceBlob], 'comment-voice-' + Date.now() + '.' + ext, { type: state.comments.voiceBlob.type || 'audio/webm' });
+      return uploadToNodeBB(file).then(function (url) { return (content ? content + '\n' : '') + '[' + TEXT.voiceMsg + ' · ' + formatDuration(state.comments.voiceDuration || 1) + '](' + appendDurationParam(url, state.comments.voiceDuration || 1) + ')'; });
+    }).then(function (content) {
+      var payload = { content: content };
+      if (state.comments.replyTo && state.comments.replyTo.pid) payload.toPid = state.comments.replyTo.pid;
+      return apiFetch('/api/v3/topics/' + encodeURIComponent(item.tid), { method: 'POST', headers: { 'content-type': 'application/json; charset=utf-8', 'x-csrf-token': csrfToken() }, body: JSON.stringify(payload) });
+    }).then(function () { input.value = ''; clearReplyTarget(); setCommentVoice(null, 0); item.counts.comments += 1; updateCountUi(item); openComments(item); })
       .catch(function () { alertError(TEXT.commentFail); window.open(item.href, '_blank'); })
       .finally(function () { btn.disabled = false; });
   }
@@ -818,11 +947,19 @@
         '<button type="button" class="pv-compose-fab">+</button>' +
         '<div class="pv-drawer-backdrop"></div><div class="pv-modal-backdrop"></div>' +
         '<section class="pv-compose-panel" role="dialog"><div class="pv-panel-head"><div class="pv-panel-title">' + TEXT.publish + '</div><button type="button" class="pv-close pv-compose-close">×</button></div><textarea placeholder="' + TEXT.placeholder + '"></textarea><div class="pv-preview-images"></div><div class="pv-compose-tools"><input type="file" class="pv-image-input" accept="image/*" multiple hidden><button type="button" class="pv-tool pv-image-btn">' + TEXT.chooseImage + '</button><button type="button" class="pv-tool pv-record-btn">' + TEXT.record + '</button><button type="button" class="pv-primary pv-compose-submit">' + TEXT.send + '</button></div><div class="pv-meta"></div></section>' +
-        '<section class="pv-comments-panel" role="dialog"><div class="pv-panel-grip"></div><div class="pv-panel-head pv-comments-drag"><div class="pv-panel-title pv-comments-title">' + TEXT.comments + '</div><button type="button" class="pv-close pv-comments-close">×</button></div><div class="pv-comments-list"></div><div class="pv-reply-bar"><span>' + TEXT.replyTo + ' </span><b class="pv-reply-name"></b><button type="button" class="pv-reply-cancel">×</button></div><div class="pv-comment-send-row"><button type="button" class="pv-comment-input-translate">译</button><input class="pv-comment-input" placeholder="' + TEXT.commentPlaceholder + '"><button type="button" class="pv-comment-submit">➤</button></div></section>' +
-        '<section class="pv-translate-panel" role="dialog"><div class="pv-panel-head"><div class="pv-panel-title">' + TEXT.translateSettings + '</div><button type="button" class="pv-close pv-translate-close">×</button></div><label>' + TEXT.sourceLang + '<select name="sourceLang"><option value="auto">' + TEXT.auto + '</option><option value="zh">中文</option><option value="en">English</option><option value="my">မြန်မာ / 缅语</option><option value="th">ไทย</option><option value="vi">Tiếng Việt</option><option value="km">ភាសាខ្មែរ</option><option value="lo">ລາວ</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="ms">Malay</option><option value="tl">Tagalog</option></select></label><label>' + TEXT.targetLang + '<select name="targetLang"><option value="zh">中文</option><option value="en">English</option><option value="my">မြန်မာ / 缅语</option><option value="th">ไทย</option><option value="vi">Tiếng Việt</option><option value="km">ភាសាខ្មែរ</option><option value="lo">ລາວ</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="ms">Malay</option><option value="tl">Tagalog</option></select></label><div class="pv-translate-actions"><button type="button" class="pv-primary pv-translate-save">' + TEXT.save + '</button></div></section>' +
+        '<section class="pv-comments-panel" role="dialog"><div class="pv-panel-grip"></div><div class="pv-panel-head pv-comments-drag"><div class="pv-panel-title pv-comments-title">' + TEXT.comments + '</div><button type="button" class="pv-close pv-comments-close">×</button></div><div class="pv-comments-list"></div><div class="pv-reply-bar"><span>' + TEXT.replyTo + ' </span><b class="pv-reply-name"></b><button type="button" class="pv-reply-cancel">×</button></div><div class="pv-comment-voice-preview"></div><div class="pv-comment-send-row"><button type="button" class="pv-comment-voice-btn">🎙</button><button type="button" class="pv-comment-input-translate">译</button><input class="pv-comment-input" placeholder="' + TEXT.commentPlaceholder + '"><button type="button" class="pv-comment-submit">➤</button></div></section>' +
+        '<section class="pv-translate-panel" role="dialog"><div class="pv-panel-head"><div class="pv-panel-title">' + TEXT.translateSettings + '</div><button type="button" class="pv-close pv-translate-close">×</button></div><label>' + TEXT.provider + '<select name="provider"><option value="google">' + TEXT.google + '</option><option value="ai">' + TEXT.ai + '</option></select></label><label>' + TEXT.sourceLang + '<select name="sourceLang">' + langOptions(true) + '</select></label><label>' + TEXT.targetLang + '<select name="targetLang">' + langOptions(false) + '</select></label><div class="pv-ai-settings"><label>' + TEXT.aiEndpoint + '<input name="aiEndpoint" placeholder="https://api.example.com/v1"></label><label>' + TEXT.aiModel + '<input name="aiModel" placeholder="gpt-4.1-mini / qwen / deepseek"></label><label>' + TEXT.aiApiKey + '<input name="aiApiKey" type="password" placeholder="API Key"></label><label>' + TEXT.aiPrompt + '<textarea name="aiPrompt" rows="4"></textarea></label></div><div class="pv-translate-actions"><button type="button" class="pv-primary pv-translate-save">' + TEXT.save + '</button></div></section>' +
         '<div class="pv-viewer"><div class="pv-viewer-swiper swiper"><div class="swiper-wrapper"></div><div class="pv-viewer-pagination"></div></div><button class="pv-viewer-close" aria-label="关闭">×</button></div>' +
       '</div>';
     bindChrome();
+  }
+
+  function bindLongPress(el, cb) {
+    if (!el) return;
+    var timer = 0, sx = 0, sy = 0;
+    el.addEventListener('pointerdown', function (e) { sx = e.clientX; sy = e.clientY; clearTimeout(timer); timer = setTimeout(function () { cb(e); timer = 0; }, 560); });
+    el.addEventListener('pointermove', function (e) { if (Math.hypot(e.clientX - sx, e.clientY - sy) > 12) { clearTimeout(timer); timer = 0; } });
+    ['pointerup','pointercancel','pointerleave'].forEach(function (n) { el.addEventListener(n, function () { clearTimeout(timer); timer = 0; }); });
   }
 
   function bindChrome() {
@@ -841,11 +978,15 @@
     $('.pv-comments-close', state.root).addEventListener('click', closeComments);
     $('.pv-reply-cancel', state.root).addEventListener('click', clearReplyTarget);
     $('.pv-comment-submit', state.root).addEventListener('click', submitComment);
+    $('.pv-comment-voice-btn', state.root).addEventListener('click', toggleCommentRecording);
+    $('.pv-comment-voice-preview', state.root).addEventListener('click', function (e) { var rm = e.target.closest('.pv-comment-voice-remove'); if (rm) { setCommentVoice(null, 0); return; } var card = e.target.closest('.pv-voice-card'); if (card) toggleVoiceCard(card); });
     $('.pv-comment-input-translate', state.root).addEventListener('click', translateCommentInput);
+    bindLongPress($('.pv-comment-input-translate', state.root), openTranslateSettings);
     $('.pv-comment-input', state.root).addEventListener('keydown', function (e) { if (e.key === 'Enter') submitComment(); });
     $('.pv-translate-close', state.root).addEventListener('click', closeTranslateSettings);
     $('.pv-modal-backdrop', state.root).addEventListener('click', closeTranslateSettings);
-    $('.pv-translate-save', state.root).addEventListener('click', function () { var p = $('.pv-translate-panel', state.root); safeJsonSet('pv-translate-settings', { sourceLang: $('[name="sourceLang"]', p).value, targetLang: $('[name="targetLang"]', p).value }); closeTranslateSettings(); });
+    $('.pv-translate-save', state.root).addEventListener('click', function () { var p = $('.pv-translate-panel', state.root); safeJsonSet('pv-translate-settings', { provider: $('[name="provider"]', p).value, sourceLang: $('[name="sourceLang"]', p).value, targetLang: $('[name="targetLang"]', p).value, aiEndpoint: $('[name="aiEndpoint"]', p).value, aiModel: $('[name="aiModel"]', p).value, aiApiKey: $('[name="aiApiKey"]', p).value, aiPrompt: $('[name="aiPrompt"]', p).value }); closeTranslateSettings(); });
+    $('[name="provider"]', $('.pv-translate-panel', state.root)).addEventListener('change', function () { $('.pv-translate-panel', state.root).classList.toggle('is-ai', this.value === 'ai'); });
     var viewer = $('.pv-viewer', state.root);
     $('.pv-viewer-close', viewer).addEventListener('click', closeViewer);
     viewer.addEventListener('pointerdown', function (e) { state.viewer.down = true; state.viewer.startX = e.clientX; state.viewer.startY = e.clientY; });
@@ -859,21 +1000,31 @@
     if ((btn = e.target.closest('.pv-follow-plus'))) { e.preventDefault(); e.stopPropagation(); var idx = Number(btn.dataset.index); toggleFollow(state.list[idx], findSlide(idx)); return; }
     if ((btn = e.target.closest('.pv-translate-btn'))) { e.preventDefault(); e.stopPropagation(); var ti = Number(btn.dataset.index); translateSlide(state.list[ti], findSlide(ti)); return; }
     if ((btn = e.target.closest('.pv-album-btn'))) { e.preventDefault(); e.stopPropagation(); var pi = Number(btn.dataset.index); openViewer(state.list[pi].images || [], 0); return; }
+    if ((btn = e.target.closest('.pv-voice-card'))) { e.preventDefault(); e.stopPropagation(); toggleVoiceCard(btn); return; }
     if ((btn = e.target.closest('.pv-comment-reply'))) { e.preventDefault(); e.stopPropagation(); setReplyTarget(e.target.closest('.pv-comment')); return; }
     if ((btn = e.target.closest('.pv-comment-translate'))) { e.preventDefault(); e.stopPropagation(); translateComment(e.target.closest('.pv-comment')); return; }
     if ((btn = e.target.closest('.pv-text-row'))) { if (!e.target.closest('.pv-translate-btn')) btn.classList.toggle('is-expanded'); }
   }
   function onRootPointerDown(e) {
     var textRow = e.target.closest('.pv-text-row');
-    if (textRow) { clearTimeout(state.translateLongPressTimer); state.translateLongPressTimer = setTimeout(function () { openTranslateSettings(); }, 650); }
+    var translateBtn = e.target.closest('.pv-translate-btn, .pv-comment-translate');
+    if (textRow || translateBtn) { clearTimeout(state.translateLongPressTimer); state.translateLongPressTimer = setTimeout(function () { openTranslateSettings(); }, 650); }
     var tap = e.target.closest('.pv-tap-zone');
     if (tap) { state.hasInteracted = true; }
-    var dragHead = e.target.closest('.pv-comments-drag, .pv-panel-grip');
-    if (dragHead && $('.pv-comments-panel', state.root).classList.contains('is-open')) { state.comments.dragging = true; state.comments.dragStartY = e.clientY; state.comments.dragY = 0; }
+    var panel = $('.pv-comments-panel', state.root);
+    if (panel && panel.classList.contains('is-open') && e.target.closest('.pv-comments-panel') && !e.target.closest('input,button,.pv-voice-card')) {
+      var rect = panel.getBoundingClientRect(); var list = e.target.closest('.pv-comments-list');
+      state.comments.dragCandidate = true; state.comments.dragStartTopZone = (e.clientY - rect.top) < 78 || (list && list.scrollTop <= 0); state.comments.dragStartY = e.clientY; state.comments.dragY = 0;
+    }
   }
   function onRootPointerMove(e) {
+    var panel = $('.pv-comments-panel', state.root);
+    if (state.comments.dragCandidate && !state.comments.dragging) {
+      var dy0 = e.clientY - state.comments.dragStartY;
+      if (dy0 > 8 && state.comments.dragStartTopZone) state.comments.dragging = true;
+      if (Math.abs(dy0) > 18 && dy0 < 0) state.comments.dragCandidate = false;
+    }
     if (state.comments.dragging) {
-      var panel = $('.pv-comments-panel', state.root);
       var dy = Math.max(0, e.clientY - state.comments.dragStartY);
       state.comments.dragY = dy;
       if (panel) panel.style.transform = 'translateY(' + dy + 'px)';
@@ -883,14 +1034,15 @@
   function onRootPointerUp(e) {
     clearTimeout(state.translateLongPressTimer);
     if (state.comments.dragging) {
-      var panel = $('.pv-comments-panel', state.root); state.comments.dragging = false;
+      var panel = $('.pv-comments-panel', state.root); state.comments.dragging = false; state.comments.dragCandidate = false;
       var dy = Math.max(0, e.clientY - state.comments.dragStartY); panel.style.transform = '';
-      if (dy > 86) closeComments(); return;
+      if (dy > 86) closeComments(); state.comments.dragCandidate = false; return;
     }
+    state.comments.dragCandidate = false;
     var tap = e.target.closest('.pv-tap-zone');
     if (tap) { e.preventDefault(); e.stopPropagation(); handleTap(e, Number(tap.dataset.index)); }
   }
-  function onRootPointerCancel() { clearTimeout(state.translateLongPressTimer); state.comments.dragging = false; var p = $('.pv-comments-panel', state.root); if (p) p.style.transform = ''; }
+  function onRootPointerCancel() { clearTimeout(state.translateLongPressTimer); state.comments.dragging = false; state.comments.dragCandidate = false; var p = $('.pv-comments-panel', state.root); if (p) p.style.transform = ''; }
 
   function showEmpty(text) { var old = $('.pv-empty-page', state.root); if (old) old.remove(); var div = document.createElement('div'); div.className = 'pv-empty-page'; div.textContent = text || TEXT.empty; state.root.appendChild(div); }
 
