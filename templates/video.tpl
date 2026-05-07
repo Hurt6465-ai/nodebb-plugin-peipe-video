@@ -8,7 +8,7 @@
   window.PEIPE_VIDEO_CONFIG = Object.assign({}, window.PEIPE_VIDEO_CONFIG || {}, {
     cid: {cid},
     pageSize: 12,
-    preloadAhead: 15,
+    preloadAhead: 16,
     preloadVideoAhead: 5,
     virtualTotal: 5,
     imageMax: {imageMax},
