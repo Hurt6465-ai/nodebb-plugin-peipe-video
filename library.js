@@ -22,6 +22,8 @@ const RE = {
   tiktokGlobal: /https?:\/\/(?:www\.)?tiktok\.com\/@[^\/\s<>'"]+\/video\/(\d+)(?:\?[^\s<>'"]*)?/ig,
   tiktokOne: /https?:\/\/(?:www\.)?tiktok\.com\/@([^\/\s<>'"]+)\/video\/(\d+)/i,
   tiktokToken: /(?:https?[-:\/]+)?(?:www[.-])?tiktok[.-]com[-\/\w@.%=&?]+/ig,
+  tiktokShort: /https?:\/\/(?:vt|vm)\.tiktok\.com\/[^\s<>\'"]+/ig,
+  tiktokShortOne: /https?:\/\/(?:vt|vm)\.tiktok\.com\/[^\s<>\'"]+/i,
   imageExt: /\.(png|jpe?g|gif|webp|avif)(?:[?#].*)?$/i,
   audioExt: /\.(m4a|mp3|wav|ogg|oga|webm|aac)(?:[?#].*)?$/i,
 };
@@ -73,10 +75,46 @@ function collectTikToks(text) {
   });
   return out;
 }
+async function resolveTikTokShortUrl(url) {
+  const raw = String(url || '').replace(/&amp;/g, '&').trim();
+  if (!raw || !RE.tiktokShortOne.test(raw)) return '';
+  const key = `short:${raw}`;
+  const cached = getCached(key);
+  if (cached !== null) return cached;
+  try {
+    if (typeof fetch !== 'function') return setCached(key, '', CONFIG.publicItemTtl);
+    const res = await fetch(raw, { method: 'GET', redirect: 'follow' });
+    const finalUrl = res && res.url ? res.url : '';
+    const match = finalUrl.match(RE.tiktokOne);
+    if (match && match[2]) {
+      const canonical = canonicalTikTokUrl(finalUrl);
+      return setCached(key, canonical, CONFIG.publicItemTtl);
+    }
+  } catch (err) {
+    winston.warn(`[nodebb-plugin-peipe-video] TikTok short url resolve failed: ${raw} ${err.message}`);
+  }
+  return setCached(key, '', 6 * 60 * 60 * 1000);
+}
+async function collectTikToksAsync(text) {
+  const out = collectTikToks(text);
+  const seen = new Set(out.map(item => item.videoId));
+  const shorts = [];
+  String(text || '').replace(RE.tiktokShort, (match) => { if (!shorts.includes(match)) shorts.push(match); return match; });
+  for (const shortUrl of shorts.slice(0, 4)) {
+    const resolved = await resolveTikTokShortUrl(shortUrl);
+    const match = resolved && resolved.match(RE.tiktokOne);
+    if (match && match[2] && !seen.has(match[2])) {
+      seen.add(match[2]);
+      out.push({ videoId: match[2], url: canonicalTikTokUrl(resolved) });
+    }
+  }
+  return out;
+}
 function cleanDisplayText(text) {
   const raw = String(text || '')
     .replace(RE.tiktokGlobal, '')
     .replace(RE.tiktokToken, '')
+    .replace(RE.tiktokShort, '')
     .replace(/!\[[^\]]*\]\([^)]+\)/g, '')
     .replace(/\[\s*(?:语音消息|语音动态|voice\s*message|audio\s*message)[^\]]*\]\([^)]+\)/ig, '')
     .replace(/<[^>]*>/g, ' ')
@@ -189,6 +227,7 @@ async function buildPublicItem(tid) {
 
   const content = String((post && (post.content || post.raw || post.markdown || post.text)) || topic.title || '');
   const media = parseMediaFromContent(content);
+  media.tiktoks = await collectTikToksAsync(content);
   const authorRaw = await getUserFields((post && post.uid) || topic.uid);
   const author = normalizeAuthor(authorRaw, post || topic);
 
@@ -334,4 +373,3 @@ plugin.addRoutes = async function addRoutes({ router, middleware, helpers }) {
 };
 
 module.exports = plugin;
-
