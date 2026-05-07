@@ -1,22 +1,25 @@
-/* Peipe /video mobile discover page v8.1 fixed
+/* Peipe /video mobile discover page v8.2 playback fixed
    - Independent /video page, official NodeBB plugin backend feed only
-   - Fixes TikTok iframe autoplay sound unlock: never reload iframe.src on slide activation
-   - Improves lower-screen vertical swipe by keeping tap overlay away from bottom controls/text
+   - Fixes iframe being blanked after leaving a slide and then never recreated
+   - Starts safely muted when no user gesture exists, then unlocks sound on touch/click
+   - Supports native mp4/webm/m3u8 URLs when the feed provides them, inspired by the first Vue <video> implementation
+   - Keeps only nearby players warm for smoother vertical swipe and lower memory use
    - Comment drawer, replies, translate for text/comments/input
    - Voice comments: explicit stop/send, 120s max
 */
 (function () {
   'use strict';
 
-  if (window.__peipeVideoDiscoverV8 || window.__peipeVideoDiscoverV81) return;
+  if (window.__peipeVideoDiscoverV82) return;
+  window.__peipeVideoDiscoverV82 = true;
   window.__peipeVideoDiscoverV8 = true;
   window.__peipeVideoDiscoverV81 = true;
 
   var CONFIG = Object.assign({
     cid: 6,
     pageSize: 12,
-    preloadAhead: 14,
-    preloadVideoAhead: 5,
+    preloadAhead: 8,
+    preloadVideoAhead: 3,
     imageMax: 4,
     coverCacheMs: 7 * 24 * 60 * 60 * 1000,
     translateCacheMs: 3 * 24 * 60 * 60 * 1000,
@@ -103,6 +106,7 @@
     feedDone: false,
     index: 0,
     players: new Map(),
+    nativePlayers: new Map(),
     imageIndex: new Map(),
     hasInteracted: false,
     lastTap: { time: 0, x: 0, y: 0, timer: 0 },
@@ -212,11 +216,21 @@
   }
 
   function injectRuntimeStyles() {
-    if (document.getElementById('pv-video-v81-runtime-style')) return;
+    var oldStyle = document.getElementById('pv-video-v81-runtime-style');
+    if (oldStyle) oldStyle.remove();
+    if (document.getElementById('pv-video-v82-runtime-style')) return;
     var style = document.createElement('style');
-    style.id = 'pv-video-v81-runtime-style';
+    style.id = 'pv-video-v82-runtime-style';
     style.textContent = [
-      '#peipe-video-app .pv-swiper,#peipe-video-app .pv-slide-item,#peipe-video-app .pv-media{touch-action:pan-y!important;}',
+      '#peipe-video-app .pv-swiper,#peipe-video-app .pv-slide-item,#peipe-video-app .pv-media{touch-action:pan-y!important;will-change:transform;}',
+      '#peipe-video-app .pv-video-shell,#peipe-video-app .pv-native-video-shell{position:absolute!important;inset:0!important;background:#000!important;overflow:hidden!important;}',
+      '#peipe-video-app .pv-tiktok-frame,#peipe-video-app .pv-native-video{width:100%!important;height:100%!important;border:0!important;display:block!important;background:#000!important;object-fit:contain!important;}',
+      '#peipe-video-app .pv-native-video{transform:translateZ(0);}',
+      '#peipe-video-app .pv-cover{position:absolute!important;inset:0!important;z-index:3!important;background:#000!important;transition:opacity .22s ease,visibility .22s ease!important;pointer-events:none!important;}',
+      '#peipe-video-app .pv-cover img{width:100%!important;height:100%!important;object-fit:cover!important;filter:blur(14px)!important;transform:scale(1.04)!important;opacity:.82!important;}',
+      '#peipe-video-app .pv-cover.is-hidden{opacity:0!important;visibility:hidden!important;}',
+      '#peipe-video-app .pv-slide-item.is-loading .pv-video-shell:after,#peipe-video-app .pv-slide-item.is-loading .pv-native-video-shell:after{content:"";position:absolute;left:50%;top:50%;width:28px;height:28px;margin:-14px 0 0 -14px;border-radius:50%;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;animation:pvSpin .8s linear infinite;z-index:8;pointer-events:none;}',
+      '@keyframes pvSpin{to{transform:rotate(360deg)}}',
       '#peipe-video-app .pv-tap-zone{position:absolute!important;left:0!important;right:82px!important;top:0!important;bottom:150px!important;z-index:4!important;touch-action:pan-y!important;pointer-events:auto!important;}',
       '#peipe-video-app .pv-toolbar,#peipe-video-app .pv-desc{position:absolute;z-index:22!important;pointer-events:auto!important;touch-action:pan-y!important;}',
       '#peipe-video-app .pv-text-row,#peipe-video-app .pv-translate-btn,#peipe-video-app .pv-comment-translate,#peipe-video-app .pv-comment-input-translate{position:relative;z-index:28!important;pointer-events:auto!important;}',
@@ -256,6 +270,57 @@
   function canonicalTikTokUrl(url) {
     var m = String(url || '').replace(/&amp;/g, '&').match(RE.tiktokOne);
     return m ? 'https://www.tiktok.com/@' + m[1] + '/video/' + m[2] : String(url || '');
+  }
+
+
+  function pushVideoUrl(out, value) {
+    if (!value) return;
+    if (Array.isArray(value)) { value.forEach(function (v) { pushVideoUrl(out, v); }); return; }
+    if (typeof value === 'object') {
+      pushVideoUrl(out, value.url || value.src || value.href || value.playUrl || value.play_url || value.downloadUrl || value.download_url);
+      pushVideoUrl(out, value.url_list || value.urlList || value.urls || value.sources);
+      return;
+    }
+    var url = String(value || '').replace(/&amp;/g, '&').trim();
+    if (!/^https?:\/\//i.test(url) && url.charAt(0) !== '/') return;
+    if (/tiktok\.com\/@[^\/\s]+\/video\//i.test(url)) return;
+    if (!/\.(mp4|m4v|webm|mov|m3u8)(?:[?#].*)?$/i.test(url) && !/[?&](mime|type)=video/i.test(url) && !/\/video\//i.test(url)) return;
+    if (!out.some(function (x) { return x === url; })) out.push(url);
+  }
+  function nativeVideoSources(item) {
+    var out = [];
+    if (!item) return out;
+    pushVideoUrl(out, item.videoUrl || item.video_url || item.playUrl || item.play_url || item.src || item.url);
+    pushVideoUrl(out, item.videoUrls || item.video_urls || item.sources || item.media);
+    if (item.video) {
+      pushVideoUrl(out, item.video.url || item.video.src || item.video.playUrl || item.video.play_url);
+      pushVideoUrl(out, item.video.url_list || item.video.urlList || item.video.urls || item.video.sources);
+      if (item.video.play_addr) pushVideoUrl(out, item.video.play_addr.url_list || item.video.play_addr.urlList || item.video.play_addr.urls);
+      if (item.video.download_addr) pushVideoUrl(out, item.video.download_addr.url_list || item.video.download_addr.urlList || item.video.download_addr.urls);
+      if (item.video.cover) pushVideoUrl(out, item.video.cover.video_url || item.video.cover.url);
+    }
+    (item.tiktoks || []).forEach(function (tk) {
+      pushVideoUrl(out, tk.videoUrl || tk.video_url || tk.playUrl || tk.play_url || tk.downloadUrl || tk.download_url || tk.src);
+      pushVideoUrl(out, tk.sources || tk.url_list || tk.urlList);
+    });
+    return out;
+  }
+  function videoPoster(item) {
+    if (!item) return '';
+    var v = item.video || {};
+    var cover = v.poster || v.cover || item.poster || item.cover || item.thumbnail || item.thumb;
+    if (Array.isArray(cover)) return cover[0] || '';
+    if (cover && typeof cover === 'object') return (cover.url_list && cover.url_list[0]) || (cover.urlList && cover.urlList[0]) || cover.url || cover.src || '';
+    if (typeof cover === 'string') return cover;
+    if (item.images && item.images[0]) return item.images[0];
+    return '';
+  }
+  function videoMime(url) {
+    url = String(url || '').split('?')[0].toLowerCase();
+    if (/\.m3u8$/.test(url)) return 'application/vnd.apple.mpegurl';
+    if (/\.webm$/.test(url)) return 'video/webm';
+    if (/\.mov$/.test(url)) return 'video/quicktime';
+    return 'video/mp4';
   }
 
   function addPreconnects() {
@@ -305,6 +370,8 @@
       state.index = 0;
       state.players.forEach(function (p) { try { if (p.iframe) p.iframe.remove(); } catch (e) {} });
       state.players.clear();
+      state.nativePlayers.forEach(function (p) { try { if (p.video) { p.video.pause(); p.video.removeAttribute('src'); p.video.load(); } } catch (e) {} });
+      state.nativePlayers.clear();
       state.imageSwipers.forEach(function (sw) { try { sw.destroy(true, true); } catch (e) {} });
       state.imageSwipers.clear();
       updateSwiperSlides(true);
@@ -338,9 +405,9 @@
     state.swiper = new window.Swiper(el, {
       direction: 'vertical',
       slidesPerView: 1,
-      speed: 260,
+      speed: 230,
       threshold: 1,
-      touchRatio: 1.28,
+      touchRatio: 1.35,
       touchStartPreventDefault: false,
       touchStartForcePreventDefault: false,
       touchMoveStopPropagation: false,
@@ -359,8 +426,8 @@
       noSwipingSelector: 'input, textarea, select, button, a, .pv-comments-panel, .pv-compose-panel, .pv-translate-panel, .pv-manage-panel, .pv-viewer, .pv-image-swiper, .pv-voice-card',
       virtual: {
         enabled: true,
-        addSlidesBefore: 3,
-        addSlidesAfter: Math.max(18, CONFIG.preloadAhead + 6),
+        addSlidesBefore: 2,
+        addSlidesAfter: Math.max(8, CONFIG.preloadAhead),
         slides: state.list.map(renderSlideHtml)
       },
       on: {
@@ -376,7 +443,7 @@
         slideChangeTransitionStart: function (swiper) {
           state.hasInteracted = true;
           hideComposerFab();
-          pauseSlide(swiper.previousIndex);
+          pauseSlide(swiper.previousIndex, true);
         },
         slideChange: function (swiper) {
           state.index = swiper.activeIndex || 0;
@@ -406,7 +473,7 @@
     $$('.pv-slide-item', state.root).forEach(function (slide) {
       var index = Number(slide.dataset.index || -1);
       slide.classList.toggle('is-active', index === state.index);
-      prepareSlide(index, false);
+      if (Math.abs(index - state.index) <= 1) prepareSlide(index, false);
     });
     initImageSwipers();
     preloadNextVideos(state.index);
@@ -416,11 +483,16 @@
     item = item || {};
     var text = displayText(item);
     var hasText = !!text;
-    var hasVideo = !!(item.tiktoks && item.tiktoks[0]);
+    var nativeSources = nativeVideoSources(item);
+    var hasNativeVideo = nativeSources.length > 0;
+    var hasTikTokVideo = !!(item.tiktoks && item.tiktoks[0]);
+    var hasVideo = hasNativeVideo || hasTikTokVideo;
     var images = (item.images || []).slice(0, CONFIG.imageMax);
     var imageIndex = getImageIndex(item);
     var mediaHtml = '';
-    if (hasVideo) {
+    if (hasNativeVideo) {
+      mediaHtml = renderNativeVideo(item, index, nativeSources);
+    } else if (hasTikTokVideo) {
       mediaHtml = '<div class="pv-video-shell" data-video-id="' + escapeHtml(item.tiktoks[0].videoId) + '"></div>';
     } else if (images.length) {
       mediaHtml = renderImageMain(item, imageIndex);
@@ -455,6 +527,18 @@
         '</div>' +
       '</section>';
   }
+  function renderNativeVideo(item, index, sources) {
+    var poster = videoPoster(item);
+    var sourceHtml = (sources || []).map(function (src) {
+      return '<source src="' + escapeHtml(src) + '" type="' + videoMime(src) + '">';
+    }).join('');
+    return '<div class="pv-native-video-shell" data-index="' + index + '">' +
+      '<video class="pv-native-video" data-index="' + index + '" ' +
+      (poster ? 'poster="' + escapeHtml(poster) + '" ' : '') +
+      'preload="metadata" muted loop playsinline webkit-playsinline x5-playsinline x5-video-player-type="h5-page" x5-video-player-fullscreen="false" disablepictureinpicture controlslist="nodownload noplaybackrate nofullscreen">' +
+      sourceHtml + '<p>您的浏览器不支持 video 标签。</p></video></div>';
+  }
+
   function iconHeart(active) { return '<svg class="pv-heart-svg" viewBox="0 0 48 48" aria-hidden="true"><path d="M24 41s-2.2-1.3-5.2-3.4C10.2 31.4 5 25.8 5 18.6 5 12.7 9.5 8 15.2 8c3.5 0 6.6 1.8 8.8 4.7C26.2 9.8 29.3 8 32.8 8 38.5 8 43 12.7 43 18.6c0 7.2-5.2 12.8-13.8 19C26.2 39.7 24 41 24 41z"></path></svg>'; }
   function iconComment() { return '<svg class="pv-comment-svg" viewBox="0 0 48 48" aria-hidden="true"><path d="M24 7.5c-9.8 0-17.5 6.8-17.5 15.2 0 5.4 3.2 10.2 8 12.9l-.8 5.2 6.1-3.4c1.4.3 2.8.4 4.2.4 9.8 0 17.5-6.8 17.5-15.1S33.8 7.5 24 7.5z"></path><circle cx="17.4" cy="23.3" r="2.1"></circle><circle cx="24" cy="23.3" r="2.1"></circle><circle cx="30.6" cy="23.3" r="2.1"></circle></svg>'; }
   function iconTranslate() { return '<i class="fa-solid fa-language" aria-hidden="true"></i>'; }
@@ -514,10 +598,10 @@
   }
   function findSlide(index) { return $('.pv-slide-item[data-index="' + index + '"]', state.root); }
 
-  function buildPlayerUrl(videoId, autoplay) {
+  function buildPlayerUrl(videoId, autoplay, muted) {
     var params = new URLSearchParams({
       autoplay: autoplay ? '1' : '0',
-      muted: '0',
+      muted: muted ? '1' : '0',
       loop: '1',
       rel: '0',
       controls: '1',
@@ -535,27 +619,33 @@
     return 'https://www.tiktok.com/player/v1/' + encodeURIComponent(videoId) + '?' + params.toString();
   }
   function playerKey(index, videoId) { return index + ':' + videoId; }
-  function ensureTikTokPlayer(index, autoplay) {
+  function isBlankIframe(iframe) {
+    if (!iframe) return true;
+    var src = iframe.getAttribute('src') || '';
+    return !src || src === 'about:blank' || src.indexOf('/player/v1/') === -1;
+  }
+  function ensureTikTokPlayer(index, autoplay, muted) {
     var item = state.list[index];
     var slide = findSlide(index);
     if (!slide || !item || !(item.tiktoks && item.tiktoks[0])) return null;
     var tk = item.tiktoks[0];
     var key = playerKey(index, tk.videoId);
     var player = state.players.get(key);
-    if (player && player.iframe && player.iframe.parentNode) return player;
+    if (player && player.iframe && player.iframe.parentNode && !isBlankIframe(player.iframe)) return player;
+    if (player && player.iframe) { try { player.iframe.remove(); } catch (e) {} state.players.delete(key); }
     var shell = $('.pv-video-shell', slide);
     if (!shell) return null;
     shell.innerHTML = '';
     var iframe = document.createElement('iframe');
     iframe.className = 'pv-tiktok-frame';
-    iframe.src = buildPlayerUrl(tk.videoId, !!autoplay);
+    iframe.src = buildPlayerUrl(tk.videoId, !!autoplay, muted !== false);
     iframe.allow = 'autoplay; fullscreen; encrypted-media; picture-in-picture';
-    iframe.loading = 'eager';
+    iframe.loading = index === state.index ? 'eager' : 'lazy';
     iframe.fetchPriority = index === state.index ? 'high' : 'low';
     iframe.referrerPolicy = 'strict-origin-when-cross-origin';
     iframe.title = 'TikTok Player';
     shell.appendChild(iframe);
-    player = { key: key, index: index, item: item, videoId: tk.videoId, iframe: iframe, ready: false, wantPlay: false, status: 'paused' };
+    player = { key: key, index: index, item: item, videoId: tk.videoId, iframe: iframe, ready: false, wantPlay: false, status: 'paused', muted: muted !== false };
     state.players.set(key, player);
     fetchCover(tk.videoId, tk.url).then(function (url) {
       if (!url) return;
@@ -564,19 +654,42 @@
     });
     return player;
   }
+  function ensureNativePlayer(index) {
+    var slide = findSlide(index);
+    var item = state.list[index];
+    if (!slide || !item || !nativeVideoSources(item).length) return null;
+    var video = $('.pv-native-video', slide);
+    if (!video) return null;
+    var key = 'native:' + index;
+    var player = state.nativePlayers.get(key);
+    if (player && player.video === video && document.documentElement.contains(video)) return player;
+    player = { key: key, index: index, item: item, video: video, wantPlay: false, status: 'paused', entered: false };
+    video.playsInline = true;
+    video.setAttribute('playsinline', '');
+    video.setAttribute('webkit-playsinline', '');
+    video.preload = index === state.index ? 'auto' : 'metadata';
+    video.addEventListener('waiting', function () { var s = findSlide(index); if (s && player.wantPlay) s.classList.add('is-loading'); });
+    video.addEventListener('canplay', function () { var s = findSlide(index); if (s) s.classList.remove('is-loading'); });
+    video.addEventListener('playing', function () { player.status = 'playing'; markSlidePlaying(index); });
+    video.addEventListener('pause', function () { player.status = 'paused'; var s = findSlide(index); if (s) s.classList.remove('is-playing', 'is-loading'); });
+    video.addEventListener('error', function () { var s = findSlide(index); if (s) s.classList.remove('is-loading'); });
+    state.nativePlayers.set(key, player);
+    return player;
+  }
   function prepareSlide(index, autoplay) {
     if (index < 0 || index >= state.list.length) return;
     var item = state.list[index];
-    if (!item || !(item.tiktoks && item.tiktoks[0])) return;
-    // Do not rewrite iframe.src here. Rewriting destroys the user gesture window and forces mute on mobile browsers.
-    ensureTikTokPlayer(index, false);
+    if (!item) return;
+    if (nativeVideoSources(item).length) { ensureNativePlayer(index); return; }
+    if (!(item.tiktoks && item.tiktoks[0])) return;
+    ensureTikTokPlayer(index, !!autoplay, true);
   }
   function preloadNextVideos(fromIndex) {
     var found = 0;
-    var maxScan = Math.min(state.list.length - 1, fromIndex + Math.max(12, CONFIG.preloadAhead + 8));
-    for (var i = Math.max(0, fromIndex); i <= maxScan && found < (CONFIG.preloadVideoAhead || 5); i += 1) {
+    var maxScan = Math.min(state.list.length - 1, fromIndex + Math.max(4, CONFIG.preloadAhead));
+    for (var i = Math.max(0, fromIndex - 1); i <= maxScan && found < (CONFIG.preloadVideoAhead || 3); i += 1) {
       var it = state.list[i];
-      if (it && it.tiktoks && it.tiktoks[0]) {
+      if (it && (nativeVideoSources(it).length || (it.tiktoks && it.tiktoks[0]))) {
         prepareSlide(i, false);
         found += 1;
       }
@@ -587,7 +700,7 @@
     $$('.pv-slide-item', state.root).forEach(function (slide) {
       var idx = Number(slide.dataset.index || -1);
       slide.classList.toggle('is-active', idx === state.index);
-      if (idx !== state.index) pauseSlide(idx);
+      if (idx !== state.index) pauseSlide(idx, true);
     });
     preloadNextVideos(state.index);
     playSlide(state.index, !!(state.hasInteracted || state.soundUnlocked));
@@ -601,62 +714,109 @@
   }
   function hardStopPlayer(player) {
     if (!player || !player.iframe) return;
+    player.wantPlay = false;
+    player.status = 'paused';
     sendToPlayer(player.iframe, 'pause');
-    setTimeout(function () { sendToPlayer(player.iframe, 'pause'); }, 60);
-    setTimeout(function () {
-      if (!player || !player.iframe || player.index === state.index) return;
-      try { player.iframe.src = 'about:blank'; } catch (e) {}
-      player.ready = false;
-      player.status = 'paused';
-      player.wantPlay = false;
-    }, 180);
+    setTimeout(function () { sendToPlayer(player.iframe, 'pause'); }, 80);
+  }
+  function hardStopNative(player, reset) {
+    if (!player || !player.video) return;
+    player.wantPlay = false;
+    player.status = 'paused';
+    try { player.video.pause(); } catch (e) {}
+    if (reset) {
+      try { if (Number.isFinite(player.video.duration) && player.video.duration > 0) player.video.currentTime = 0; } catch (e) {}
+    }
+  }
+  function playNativeSlide(index, userGesture) {
+    var player = ensureNativePlayer(index);
+    if (!player || !player.video) return;
+    var video = player.video;
+    var slide = findSlide(index);
+    pauseOtherPlayers(player.key);
+    player.wantPlay = true;
+    video.preload = 'auto';
+    if (!player.entered) { try { video.currentTime = 0; } catch (e) {} player.entered = true; }
+    var canSound = !!(userGesture || (state.hasInteracted && state.soundUnlocked));
+    video.muted = !canSound;
+    if (canSound) { try { video.volume = 1; } catch (e) {} state.soundUnlocked = true; safeJsonSet('pv-sound-unlocked', true); }
+    if (slide) slide.classList.add('is-loading');
+    var ret;
+    try { ret = video.play(); } catch (e) { ret = Promise.reject(e); }
+    if (ret && ret.catch) {
+      ret.catch(function () {
+        video.muted = true;
+        state.soundUnlocked = false;
+        safeJsonSet('pv-sound-unlocked', false);
+        try { video.play().catch(function () {}); } catch (e) {}
+      });
+    }
   }
   function playSlide(index, userGesture) {
     var item = state.list[index];
-    if (!item || !(item.tiktoks && item.tiktoks[0])) { preloadNextVideos(index); return; }
-    var player = ensureTikTokPlayer(index, false);
+    if (!item) { preloadNextVideos(index); return; }
+    if (nativeVideoSources(item).length) { playNativeSlide(index, userGesture); preloadNextVideos(index); return; }
+    if (!(item.tiktoks && item.tiktoks[0])) { preloadNextVideos(index); return; }
+    var canSound = !!(userGesture || (state.hasInteracted && state.soundUnlocked));
+    var player = ensureTikTokPlayer(index, true, !canSound);
     if (!player || !player.iframe) return;
     player.wantPlay = true;
-    // Important: do not modify iframe.src here. Just send postMessage commands.
+    player.muted = !canSound;
     pauseOtherPlayers(player.key);
     var slide = findSlide(index);
     if (slide) slide.classList.add('is-loading');
     if (userGesture) { state.hasInteracted = true; state.soundUnlocked = true; safeJsonSet('pv-sound-unlocked', true); }
-    sendToPlayer(player.iframe, 'unMute');
+    var soundCommand = canSound ? 'unMute' : 'mute';
+    sendToPlayer(player.iframe, soundCommand);
     sendToPlayer(player.iframe, 'play');
-    setTimeout(function () { sendToPlayer(player.iframe, 'play'); sendToPlayer(player.iframe, 'unMute'); }, 80);
-    setTimeout(function () { sendToPlayer(player.iframe, 'unMute'); sendToPlayer(player.iframe, 'play'); }, 260);
-    setTimeout(function () { sendToPlayer(player.iframe, 'unMute'); sendToPlayer(player.iframe, 'play'); }, 720);
+    setTimeout(function () { sendToPlayer(player.iframe, soundCommand); sendToPlayer(player.iframe, 'play'); }, 90);
+    setTimeout(function () { sendToPlayer(player.iframe, 'play'); sendToPlayer(player.iframe, soundCommand); }, 280);
+    setTimeout(function () { sendToPlayer(player.iframe, soundCommand); sendToPlayer(player.iframe, 'play'); }, 760);
+    setTimeout(function () { if (player.wantPlay && player.index === state.index) markSlidePlaying(index); }, 1300);
+    preloadNextVideos(index);
   }
-  function pauseSlide(index) {
+  function pauseSlide(index, resetNative) {
     state.players.forEach(function (p) {
       if (p.index !== index) return;
-      p.wantPlay = false; p.status = 'paused';
       hardStopPlayer(p);
+    });
+    state.nativePlayers.forEach(function (p) {
+      if (p.index !== index) return;
+      hardStopNative(p, resetNative !== false);
+      if (resetNative !== false) p.entered = false;
     });
     var slide = findSlide(index);
     if (slide) slide.classList.remove('is-playing', 'is-loading');
   }
+  function pauseOtherNativePlayers(currentKey) {
+    state.nativePlayers.forEach(function (p, key) {
+      if (key === currentKey) return;
+      hardStopNative(p, true);
+      p.entered = false;
+      var slide = findSlide(p.index);
+      if (slide) slide.classList.remove('is-playing', 'is-loading');
+    });
+  }
   function pauseOtherPlayers(currentKey) {
+    pauseOtherNativePlayers(currentKey);
     state.players.forEach(function (p, key) {
       if (key === currentKey) return;
-      var wasActive = p.wantPlay || p.status === 'playing' || p.index < state.index || Math.abs(p.index - state.index) > CONFIG.preloadAhead;
-      p.wantPlay = false; p.status = 'paused';
-      if (p.iframe) {
-        sendToPlayer(p.iframe, 'pause');
-        setTimeout(function(){ sendToPlayer(p.iframe, 'pause'); }, 80);
-        if (wasActive) hardStopPlayer(p);
-      }
+      hardStopPlayer(p);
       var slide = findSlide(p.index);
       if (slide) slide.classList.remove('is-playing', 'is-loading');
     });
   }
   function prunePlayers() {
-    var keep = CONFIG.preloadAhead + 2;
+    var keep = Math.max(4, (CONFIG.preloadVideoAhead || 3) + 2);
     state.players.forEach(function (p, key) {
-      if (Math.abs(p.index - state.index) <= keep) return;
-      try { if (p.iframe) { sendToPlayer(p.iframe, 'pause'); p.iframe.src = 'about:blank'; p.iframe.remove(); } } catch (e) {}
+      if (Math.abs(p.index - state.index) <= keep && p.iframe && p.iframe.parentNode && !isBlankIframe(p.iframe)) return;
+      try { if (p.iframe) { sendToPlayer(p.iframe, 'pause'); p.iframe.remove(); } } catch (e) {}
       state.players.delete(key);
+    });
+    state.nativePlayers.forEach(function (p, key) {
+      if (Math.abs(p.index - state.index) <= keep && p.video && document.documentElement.contains(p.video)) return;
+      hardStopNative(p, true);
+      state.nativePlayers.delete(key);
     });
   }
   function markSlidePlaying(index) {
@@ -679,7 +839,7 @@
       if (!player.iframe || player.iframe.contentWindow !== event.source) return;
       if (data.type === 'onPlayerReady') {
         player.ready = true;
-        if (player.wantPlay) { sendToPlayer(player.iframe, 'unMute'); sendToPlayer(player.iframe, 'play'); }
+        if (player.wantPlay) { sendToPlayer(player.iframe, player.muted ? 'mute' : 'unMute'); sendToPlayer(player.iframe, 'play'); }
         return;
       }
       if (data.type === 'onMute' || data.type === 'onVolumeChange' || String(data.type || '').toLowerCase().indexOf('mute') !== -1) {
@@ -690,7 +850,7 @@
       }
       if (data.type === 'onStateChange') {
         var value = Number(data.value); var word = String(data.value || '').toLowerCase();
-        if (value === 1 || word === 'playing') { player.status = 'playing'; state.soundUnlocked = true; safeJsonSet('pv-sound-unlocked', true); pauseOtherPlayers(player.key); markSlidePlaying(player.index); }
+        if (value === 1 || word === 'playing') { player.status = 'playing'; if (state.hasInteracted && !player.muted) { state.soundUnlocked = true; safeJsonSet('pv-sound-unlocked', true); } pauseOtherPlayers(player.key); markSlidePlaying(player.index); }
         else if (value === 2 || value === 0 || word === 'paused' || word === 'ended') { player.status = 'paused'; var s = findSlide(player.index); if (s) s.classList.remove('is-playing', 'is-loading'); }
         else if (value === 3 || word === 'buffering') { var s2 = findSlide(player.index); if (s2 && player.wantPlay) s2.classList.add('is-loading'); }
       }
@@ -720,8 +880,8 @@
     clearTimeout(last.timer);
     last.timer = setTimeout(function () {
       if (!(item.tiktoks && item.tiktoks[0])) return;
-      var player = Array.from(state.players.values()).find(function (p) { return p.index === index; });
-      if (player && player.status === 'playing') pauseSlide(index);
+      var player = Array.from(state.players.values()).find(function (p) { return p.index === index; }) || state.nativePlayers.get('native:' + index);
+      if (player && player.status === 'playing') pauseSlide(index, false);
       else { state.hasInteracted = true; playSlide(index, true); }
     }, CONFIG.doubleTapMs + 20);
   }
@@ -1045,7 +1205,7 @@
 
   function showComposeFabInitial() { var fab = $('.pv-compose-fab', state.root); if (!fab) return; fab.classList.remove('is-hidden'); }
   function hideComposerFab() { var fab = $('.pv-compose-fab', state.root); if (!fab) return; fab.classList.add('is-hidden'); }
-  function openCompose() { pauseSlide(state.index); $('.pv-drawer-backdrop', state.root).classList.add('is-open'); $('.pv-compose-panel', state.root).classList.add('is-open'); hideComposerFab(); }
+  function openCompose() { pauseSlide(state.index, false); $('.pv-drawer-backdrop', state.root).classList.add('is-open'); $('.pv-compose-panel', state.root).classList.add('is-open'); hideComposerFab(); }
   function closeCompose() { $('.pv-compose-panel', state.root).classList.remove('is-open'); $('.pv-drawer-backdrop', state.root).classList.remove('is-open'); }
   function resetCompose() { var p = $('.pv-compose-panel', state.root); $('textarea', p).value = ''; setPendingImages([]); setPendingVoice(null, 0); $('.pv-meta', p).textContent = ''; }
 
@@ -1206,7 +1366,7 @@
     $('.pv-viewer-close', viewer).addEventListener('click', closeViewer);
     viewer.addEventListener('pointerdown', function (e) { state.viewer.down = true; state.viewer.startX = e.clientX; state.viewer.startY = e.clientY; });
     viewer.addEventListener('pointerup', function (e) { if (!state.viewer.down) return; state.viewer.down = false; var dx = e.clientX - state.viewer.startX; var dy = e.clientY - state.viewer.startY; if (dy > 66 && Math.abs(dy) > Math.abs(dx)) closeViewer(); });
-    document.addEventListener('visibilitychange', function () { if (document.hidden) pauseSlide(state.index); else activateCurrent(false); });
+    document.addEventListener('visibilitychange', function () { if (document.hidden) pauseSlide(state.index, false); else activateCurrent(false); });
   }
 
   function isTranslatePanelOpen() {
