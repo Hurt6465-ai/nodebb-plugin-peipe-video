@@ -1759,3 +1759,234 @@ body.pv-video-mode [component="sidebar"] {
   .pv-toolbar { bottom: max(176px, calc(var(--pv-bottom-safe) + 168px)) !important; }
   .pv-tap-zone { bottom: max(208px, calc(var(--pv-bottom-safe) + 200px)) !important; }
 }
+
+/* Peipe video v8 refinements: mobile-first polish, source notice, manage panel, voice input overlay */
+.pv-init-loading,
+.pv-empty-page {
+  white-space: pre-line !important;
+  padding: 24px !important;
+  text-align: center !important;
+  line-height: 1.65 !important;
+  font-size: 13px !important;
+  color: rgba(255,255,255,.86) !important;
+}
+
+.pv-source-notice {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  top: max(10px, var(--pv-top-safe));
+  z-index: 4;
+  padding: 9px 12px;
+  border-radius: 16px;
+  background: rgba(0,0,0,.18);
+  color: rgba(255,255,255,.68);
+  font-size: 11px;
+  line-height: 1.45;
+  text-align: center;
+  pointer-events: none;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+.pv-slide-item.is-active.is-playing ~ .pv-source-notice,
+.pv-page .pv-swiper:not(:empty) + .pv-source-notice { opacity: .0; transition: opacity .2s ease; }
+
+/* Keep cover visible until TikTok actually reports playing. No TikTok black/logo loading mask. */
+.pv-slide-item.is-loading .pv-cover:not(.is-hidden)::after { display: none !important; }
+.pv-cover img { filter: none !important; }
+
+/* Smooth vertical swipe even when gesture starts near bottom text. */
+.pv-swiper { touch-action: pan-y !important; }
+.pv-slide-item { touch-action: pan-y !important; }
+.pv-tap-zone { touch-action: pan-y !important; }
+.pv-desc {
+  bottom: max(92px, calc(var(--pv-bottom-safe) + 86px)) !important;
+  right: 84px !important;
+  pointer-events: none !important;
+}
+.pv-text-row,
+.pv-translate-btn { pointer-events: auto !important; }
+.pv-username {
+  pointer-events: none !important;
+  font-size: 15px !important;
+  line-height: 1.28 !important;
+  margin-bottom: 5px !important;
+}
+.pv-toolbar {
+  bottom: max(172px, calc(var(--pv-bottom-safe) + 166px)) !important;
+}
+.pv-tap-zone {
+  bottom: max(178px, calc(var(--pv-bottom-safe) + 172px)) !important;
+  right: 100px !important;
+}
+
+/* TikTok official controls must remain clickable on the right/bottom. */
+.pv-video-shell { --pv-crop-right: 44px !important; --pv-crop-bottom: 0px !important; }
+.pv-tiktok-frame { pointer-events: auto !important; }
+
+/* Cleaner icons */
+.pv-more-svg { width: 26px; height: 26px; fill: rgba(255,255,255,.96); }
+.pv-manage-btn .pv-action-icon svg { width: 25px !important; height: 25px !important; }
+.pv-like:not(.is-active) .pv-heart-svg path {
+  fill: rgba(255,255,255,0) !important;
+  stroke: rgba(255,255,255,.98) !important;
+  stroke-width: 3.4px !important;
+}
+.pv-like.is-active .pv-heart-svg path { fill: #ff2d55 !important; stroke: #ff2d55 !important; }
+
+/* Comments drawer auto-ish height and brighter frosted glass */
+.pv-comments-panel {
+  height: auto !important;
+  min-height: 46dvh !important;
+  max-height: 88dvh !important;
+  border-radius: 26px 26px 0 0 !important;
+  background: linear-gradient(180deg, rgba(255,255,255,.86), rgba(245,248,255,.72)) !important;
+  color: #111827 !important;
+  backdrop-filter: blur(24px) saturate(1.35) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(1.35) !important;
+  box-shadow: 0 -18px 48px rgba(15,23,42,.22) !important;
+}
+.pv-comments-list {
+  max-height: min(62dvh, 520px) !important;
+  min-height: 140px !important;
+}
+.pv-drawer-backdrop,
+.pv-modal-backdrop { background: rgba(0,0,0,.12) !important; }
+
+/* Comment input: ordinary transparent row, icons inside, no blocky double border. */
+.pv-comment-send-row {
+  position: relative !important;
+  min-height: 54px !important;
+  padding: 7px 8px max(8px, var(--pv-bottom-safe)) !important;
+  background: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+.pv-comment-input-wrap {
+  min-height: 44px !important;
+  border-radius: 999px !important;
+  background: rgba(255,255,255,.74) !important;
+  border: 0 !important;
+  box-shadow: 0 8px 24px rgba(15,23,42,.08) !important;
+  padding: 0 6px 0 8px !important;
+}
+.pv-comment-input-wrap .pv-comment-input {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  outline: 0 !important;
+  border-radius: 0 !important;
+  height: 42px !important;
+  padding: 0 6px !important;
+}
+.pv-comment-input-wrap .pv-comment-input-translate,
+.pv-comment-input-wrap .pv-comment-action-btn {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  color: rgba(17,24,39,.72) !important;
+}
+.pv-comment-input-wrap .pv-comment-action-btn.is-send { color: #1677ff !important; }
+.pv-send-svg { transform: rotate(-90deg); }
+
+/* Recording overlay replaces the input area. */
+.pv-comment-record-panel {
+  position: absolute !important;
+  left: 8px !important;
+  right: 8px !important;
+  bottom: max(8px, var(--pv-bottom-safe)) !important;
+  height: 44px !important;
+  margin: 0 !important;
+  padding: 0 12px !important;
+  border-radius: 999px !important;
+  background: #083a63 !important;
+  color: #fff !important;
+  z-index: 3 !important;
+  box-shadow: 0 8px 24px rgba(0,40,80,.18) !important;
+}
+.pv-comments-panel:has(.pv-comment-record-panel.is-open) .pv-comment-input-wrap {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+.pv-record-tip { display: none !important; }
+.pv-record-pulse { background: #fff !important; box-shadow: none !important; }
+.pv-record-bars i { background: #fff !important; }
+
+/* Translation settings: light frosted glass, centered mode, source/target one row. */
+.pv-translate-panel {
+  background: linear-gradient(180deg, rgba(255,255,255,.90), rgba(246,248,255,.78)) !important;
+  color: #111827 !important;
+  border-radius: 26px 26px 0 0 !important;
+  backdrop-filter: blur(24px) saturate(1.35) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(1.35) !important;
+  box-shadow: 0 -18px 48px rgba(15,23,42,.22) !important;
+}
+.pv-translate-panel label { color: rgba(17,24,39,.72) !important; }
+.pv-translate-panel input,
+.pv-translate-panel select,
+.pv-translate-panel textarea {
+  background: rgba(255,255,255,.68) !important;
+  color: #111827 !important;
+  border: 0 !important;
+  box-shadow: 0 6px 18px rgba(15,23,42,.06) !important;
+}
+.pv-provider-tabs { justify-content: center !important; }
+.pv-provider-tab {
+  background: rgba(17,24,39,.06) !important;
+  color: rgba(17,24,39,.7) !important;
+}
+.pv-provider-tab.is-active {
+  background: #111827 !important;
+  color: #fff !important;
+}
+.pv-lang-row {
+  display: grid !important;
+  grid-template-columns: 1fr auto 1fr !important;
+  align-items: end !important;
+}
+.pv-lang-row label span { color: rgba(17,24,39,.62) !important; }
+.pv-lang-arrow { color: rgba(17,24,39,.45) !important; }
+
+/* Manage sheet */
+.pv-manage-panel {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: max(12px, var(--pv-bottom-safe));
+  z-index: 92;
+  display: none;
+  padding: 10px;
+  border-radius: 24px;
+  background: rgba(255,255,255,.88);
+  backdrop-filter: blur(24px) saturate(1.35);
+  -webkit-backdrop-filter: blur(24px) saturate(1.35);
+  box-shadow: 0 18px 52px rgba(15,23,42,.24);
+}
+.pv-manage-panel.is-open { display: grid; gap: 8px; }
+.pv-manage-panel button {
+  height: 46px;
+  border: 0;
+  border-radius: 16px;
+  background: rgba(17,24,39,.06);
+  color: #111827;
+  font-weight: 850;
+}
+.pv-manage-delete { color: #ff2442 !important; }
+.pv-manage-cancel { background: transparent !important; color: rgba(17,24,39,.55) !important; }
+
+/* Composer: bright frosted glass and translate button */
+.pv-compose-panel {
+  background: linear-gradient(180deg, rgba(255,255,255,.92), rgba(246,248,255,.78)) !important;
+  color: #111827 !important;
+  backdrop-filter: blur(24px) saturate(1.35) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(1.35) !important;
+}
+.pv-compose-panel textarea {
+  background: rgba(255,255,255,.72) !important;
+  color: #111827 !important;
+  border: 0 !important;
+  border-radius: 18px !important;
+  box-shadow: 0 8px 24px rgba(15,23,42,.08) !important;
+}
+.pv-compose-translate svg,
+.pv-compose-translate i { width: 18px !important; height: 18px !important; }
