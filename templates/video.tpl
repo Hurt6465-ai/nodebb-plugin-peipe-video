@@ -32,7 +32,7 @@ body.template-video .container-xxl { max-width:none !important; width:100vw !imp
 <div id="peipe-video-app" class="pv-root" data-cid="{cid}" data-version="v22-direct-sound-button">
   <div class="pv-init-loading">发现加载中...</div>
 </div>
-<link rel="stylesheet" href="/plugins/nodebb-plugin-peipe-video/static/video-app.css?v=21">
+<link rel="stylesheet" href="/plugins/nodebb-plugin-peipe-video/static/video-app.css?v=22">
 <script>
 window.PEIPE_VIDEO_CONFIG = Object.assign({}, window.PEIPE_VIDEO_CONFIG || {}, {
   cid: {cid},
@@ -44,4 +44,4 @@ window.PEIPE_VIDEO_CONFIG = Object.assign({}, window.PEIPE_VIDEO_CONFIG || {}, {
   swiperCdnJs: '/plugins/nodebb-plugin-peipe-video/static/lib/swiper-bundle.min.js'
 });
 </script>
-<script src="/plugins/nodebb-plugin-peipe-video/static/video-app.js?v=21"></script>
+<script src="/plugins/nodebb-plugin-peipe-video/static/video-app.js?v=22"></script>
