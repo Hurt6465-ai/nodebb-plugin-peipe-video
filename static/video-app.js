@@ -1,12 +1,13 @@
-/* Peipe /video discover page v12
+window.addEventListener('error', function(e){try{var r=document.getElementById('peipe-video-app');if(r&&!r.querySelector('.pv-runtime-error')){var d=document.createElement('div');d.className='pv-runtime-error';d.textContent='前端错误: '+(e.message||'unknown');r.appendChild(d);}}catch(_){}});
+/* Peipe /video discover page v13-full
    Fixes TikTok iframe sound bug: never rewrites iframe.src in playSlide/prepareSlide.
    Mobile first. Requires static/lib/swiper-bundle.min.js and .css. */
 (function () {
   'use strict';
-  window.PEIPE_VIDEO_VERSION = 'v12-full-split';
 
-  if (window.__peipeVideoDiscoverV12) return;
-  window.__peipeVideoDiscoverV12 = true;
+  if (window.__peipeVideoDiscoverV13) return;
+  window.PEIPE_VIDEO_VERSION = 'v13-full-from-new-js';
+  window.__peipeVideoDiscoverV13 = true;
 
   var CONFIG = Object.assign({
     cid: 6,
@@ -75,7 +76,7 @@
   function escapeHtml(s) { return String(s || '').replace(/[&<>'"]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[c]; }); }
   function rel(path) { var base = (window.config && window.config.relative_path) || ''; if (!path) return base || ''; if (/^https?:\/\//i.test(path)) return path; if (path.indexOf(base + '/') === 0) return path; return base + path; }
   function csrfToken() { return (window.config && (window.config.csrf_token || window.config.csrfToken)) || (($('meta[name="csrf-token"]') || {}).content) || ''; }
-  function currentUser() { return (window.app && window.app.user) || null; }
+  function currentUser() { return (window.app && window.app.user) || (window.config && window.config.user) || null; }
   function isLoggedIn() { var u = currentUser(); return !!(u && Number(u.uid || 0) > 0); }
   function uidSuffix() { var u = currentUser(); return String(u && u.uid || 'guest'); }
   function alertError(msg) { if (window.app && app.alertError) app.alertError(msg); else window.alert(msg); }
@@ -159,7 +160,7 @@
   function ensureTikTokPlayer(index) {
     var item = state.list[index], slide = findSlide(index); if (!slide || !item || !(item.tiktoks && item.tiktoks[0])) return null;
     var tk = item.tiktoks[0], key = playerKey(index, tk.videoId), player = state.players.get(key); if (player && player.iframe && player.iframe.parentNode) return player;
-    var shell = $('.pv-video-shell', slide); if (!shell) return null; shell.innerHTML = ''; var iframe = document.createElement('iframe'); iframe.className = 'pv-tiktok-frame'; iframe.src = buildPlayerUrl(tk.videoId); iframe.allow = 'autoplay; fullscreen; encrypted-media; picture-in-picture'; iframe.loading = 'eager'; iframe.fetchpriority = index === state.index ? 'high' : 'low'; iframe.referrerPolicy = 'strict-origin-when-cross-origin'; iframe.title = 'TikTok Player'; shell.appendChild(iframe);
+    var shell = $('.pv-video-shell', slide); if (!shell) return null; shell.innerHTML = ''; var iframe = document.createElement('iframe'); iframe.className = 'pv-tiktok-frame'; iframe.src = buildPlayerUrl(tk.videoId); iframe.allow = 'autoplay; fullscreen; encrypted-media; picture-in-picture'; iframe.loading = 'eager'; iframe.fetchPriority = index === state.index ? 'high' : 'low'; iframe.referrerPolicy = 'strict-origin-when-cross-origin'; iframe.title = 'TikTok Player'; shell.appendChild(iframe);
     player = { key: key, index: index, item: item, videoId: tk.videoId, iframe: iframe, wantPlay: false, ready: false, status: 'paused' }; state.players.set(key, player); fetchCover(tk.videoId, tk.url).then(function (url) { var img = $('.pv-cover img', slide); if (url && img && !img.src) img.src = url; }); return player;
   }
   function prepareSlide(index) { if (index < 0 || index >= state.list.length) return; var item = state.list[index]; if (!item || !(item.tiktoks && item.tiktoks[0])) return; ensureTikTokPlayer(index); }
