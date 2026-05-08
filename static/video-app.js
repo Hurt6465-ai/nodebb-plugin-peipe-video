@@ -1,4 +1,4 @@
-/* Peipe /video mobile discover page v16-audio-reuse
+/* Peipe /video mobile discover page v17-audio-unlock-once
    - Independent /video page, official NodeBB plugin backend feed only
    - Swiper vertical feed with virtual slides
    - TikTok official embed keeps official audio controls; no custom center play button
@@ -10,7 +10,7 @@
 
   if (window.__peipeVideoDiscoverV16AudioReuse) return;
   window.__peipeVideoDiscoverV16AudioReuse = true;
-  window.PEIPE_VIDEO_VERSION = 'v16-audio-reuse';
+  window.PEIPE_VIDEO_VERSION = 'v17-audio-unlock-once';
 
   var CONFIG = Object.assign({
     cid: 6,
@@ -533,7 +533,23 @@
     if (!iframe || !iframe.contentWindow) return;
     var msg = { 'x-tiktok-player': true, type: type };
     if (arguments.length >= 3) msg.value = value;
-    iframe.contentWindow.postMessage(msg, 'https://www.tiktok.com');
+    try { iframe.contentWindow.postMessage(msg, 'https://www.tiktok.com'); } catch (e) {}
+  }
+  function remountPlayerUnmuted(player, autoplay) {
+    if (!player || !player.iframe || !player.videoId) return;
+    player.wantPlay = !!autoplay;
+    player.ready = false;
+    player.status = 'paused';
+    player.initialMuted = false;
+    player.iframe.src = buildPlayerUrl(player.videoId, !!autoplay, false);
+  }
+  function remountNearPlayersUnmuted() {
+    var maxDistance = Math.max(2, CONFIG.preloadVideoAhead || 3);
+    state.players.forEach(function (player) {
+      if (!player || !player.iframe || !player.initialMuted) return;
+      if (Math.abs(player.index - state.index) > maxDistance + 2) return;
+      remountPlayerUnmuted(player, player.index === state.index);
+    });
   }
   function hardStopPlayer(player) {
     if (!player || !player.iframe) return;
@@ -564,7 +580,11 @@
       state.hasInteracted = true;
       state.soundUnlocked = true;
       safeJsonSet('pv-sound-unlocked', true);
-      player.initialMuted = false;
+      remountNearPlayersUnmuted();
+      player = ensureTikTokPlayer(index, true) || player;
+    } else if (state.soundUnlocked && player.initialMuted) {
+      // 兜底：如果某个旧预加载 iframe 仍是 muted=1，只重建这一次，不再每次滑动都重建。
+      remountPlayerUnmuted(player, true);
     }
     pauseOtherPlayers(player.key);
     var slide = findSlide(index);
@@ -626,6 +646,20 @@
         if (value === 1 || word === 'playing') { player.status = 'playing'; if (state.hasInteracted || state.soundUnlocked || !player.initialMuted) { state.soundUnlocked = true; safeJsonSet('pv-sound-unlocked', true); player.initialMuted = false; } pauseOtherPlayers(player.key); markSlidePlaying(player.index); }
         else if (value === 2 || value === 0 || word === 'paused' || word === 'ended') { player.status = 'paused'; var s = findSlide(player.index); if (s) s.classList.remove('is-playing', 'is-loading'); }
         else if (value === 3 || word === 'buffering') { var s2 = findSlide(player.index); if (s2 && player.wantPlay) s2.classList.add('is-loading'); }
+      }
+      if (data.type === 'onMute' && data.value === false) {
+        state.hasInteracted = true;
+        state.soundUnlocked = true;
+        safeJsonSet('pv-sound-unlocked', true);
+        player.initialMuted = false;
+        remountNearPlayersUnmuted();
+      }
+      if (data.type === 'onVolumeChange' && Number(data.value) > 0) {
+        state.hasInteracted = true;
+        state.soundUnlocked = true;
+        safeJsonSet('pv-sound-unlocked', true);
+        player.initialMuted = false;
+        remountNearPlayersUnmuted();
       }
     });
   });
@@ -1037,6 +1071,9 @@
     state.hasInteracted = true;
     state.soundUnlocked = true;
     safeJsonSet('pv-sound-unlocked', true);
+    // 关键：第一次真实手势时，把已预加载但 muted=1 的当前/邻近播放器一次性重建为 muted=0。
+    // 后续新建 iframe 都会因为 soundUnlocked=true 直接使用 muted=0，不需要每条再手动点音量。
+    remountNearPlayersUnmuted();
     playSlide(state.index, true);
   }
 
