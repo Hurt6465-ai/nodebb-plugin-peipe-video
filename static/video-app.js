@@ -1,4 +1,4 @@
-/* Peipe /video mobile discover page v19-custom-sound-preload-videos
+/* Peipe /video mobile discover page v20-custom-sound-one-tap
    - Independent /video page, official NodeBB plugin backend feed only
    - Swiper vertical feed with virtual slides
    - TikTok official embed keeps official audio controls; no custom center play button
@@ -10,7 +10,7 @@
 
   if (window.__peipeVideoDiscoverV19CustomSoundPreload) return;
   window.__peipeVideoDiscoverV19CustomSoundPreload = true;
-  window.PEIPE_VIDEO_VERSION = 'v19-custom-sound-preload-videos';
+  window.PEIPE_VIDEO_VERSION = 'v20-custom-sound-one-tap';
 
   var CONFIG = Object.assign({
     cid: 6,
@@ -108,6 +108,8 @@
     viewer: { images: [], index: 0, swiper: null, startX: 0, startY: 0, down: false },
     imageSwipers: new Map(),
     soundUnlocked: !!safeJsonGet('pv-sound-unlocked', false),
+    // Per-page confirmation. Do not trust old localStorage to hide the sound button; mobile browsers still need a fresh tap.
+    soundConfirmed: false,
     comments: { item: null, posts: [], loading: false, replyTo: null, dragY: 0, dragStartY: 0, dragging: false, dragCandidate: false, dragStartTopZone: false, voiceBlob: null, voiceUrl: '', voiceDuration: 0, mediaRecorder: null, stream: null, chunks: [], startAt: 0, timer: 0 },
     translateLongPressTimer: 0,
     virtualUpdateTimer: 0,
@@ -349,6 +351,7 @@
       prepareSlide(index, false);
     });
     initImageSwipers();
+    if (state.soundConfirmed) hideSoundUnlockButtons();
     preloadNextVideos(state.index);
   }
 
@@ -381,7 +384,7 @@
         (hasVideo ? '<div class="pv-cover"><img alt="cover"></div>' : '') +
         '<div class="pv-gradient"></div>' +
         (hasVideo ? '<div class="pv-tap-zone" data-index="' + index + '"></div>' : '') +
-        (hasVideo && !state.soundUnlocked ? '<button type="button" class="pv-sound-unlock" data-index="' + index + '" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:80;border:0;border-radius:999px;padding:10px 16px;background:rgba(0,0,0,.58);color:#fff;font-size:14px;font-weight:800;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);">🔊 ' + TEXT.tapToUnmute + '</button>' : '') +
+        (hasVideo && !state.soundConfirmed ? '<button type="button" class="pv-sound-unlock" data-index="' + index + '" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:120;border:0;border-radius:999px;padding:12px 18px;background:rgba(0,0,0,.66);color:#fff;font-size:15px;font-weight:900;box-shadow:0 8px 24px rgba(0,0,0,.28);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);pointer-events:auto;">🔊 点一下开启声音</button>' : '') +
         '<div class="pv-toolbar">' +
           '<div class="pv-avatar-wrap"><a href="' + authorHref(author) + '">' + avatarHtml + '</a>' +
           (author.uid && !isOwnAuthor(author) ? '<button type="button" class="pv-follow-plus ' + (following ? 'is-following' : '') + '" data-index="' + index + '">' + (following ? '✓' : '+') + '</button>' : '') + '</div>' +
@@ -493,7 +496,7 @@
     iframe.style.setProperty('pointer-events', 'none', 'important');
     // Keep preloaded videos autoplaying muted so the next slide already has moving frames.
     // Do not rebuild iframe on every slide change; sound is requested with postMessage after user unlock.
-    var shouldTryUnmuted = !!(state.soundUnlocked && state.hasInteracted);
+    var shouldTryUnmuted = !!(state.soundUnlocked && state.soundConfirmed && state.hasInteracted);
     iframe.src = buildPlayerUrl(tk.videoId, !!autoplay, !shouldTryUnmuted);
     iframe.allow = 'autoplay; fullscreen; encrypted-media; picture-in-picture';
     iframe.loading = 'eager';
@@ -599,6 +602,7 @@
       state.hasInteracted = true;
       state.lastUserGestureAt = Date.now();
       state.soundUnlocked = true;
+      state.soundConfirmed = true;
       safeJsonSet('pv-sound-unlocked', true);
     }
     var player = ensureTikTokPlayer(index, true);
@@ -672,13 +676,14 @@
       }
       if (data.type === 'onStateChange') {
         var value = Number(data.value); var word = String(data.value || '').toLowerCase();
-        if (value === 1 || word === 'playing') { player.status = 'playing'; if (state.hasInteracted || state.soundUnlocked || !player.initialMuted) { state.soundUnlocked = true; safeJsonSet('pv-sound-unlocked', true); player.initialMuted = false; } pauseOtherPlayers(player.key); markSlidePlaying(player.index); }
+        if (value === 1 || word === 'playing') { player.status = 'playing'; if (state.hasInteracted || !player.initialMuted) { state.soundUnlocked = true; state.soundConfirmed = true; safeJsonSet('pv-sound-unlocked', true); player.initialMuted = false; hideSoundUnlockButtons(); } pauseOtherPlayers(player.key); markSlidePlaying(player.index); }
         else if (value === 2 || value === 0 || word === 'paused' || word === 'ended') { player.status = 'paused'; var s = findSlide(player.index); if (s) s.classList.remove('is-playing', 'is-loading'); }
         else if (value === 3 || word === 'buffering') { var s2 = findSlide(player.index); if (s2 && player.wantPlay) s2.classList.add('is-loading'); }
       }
       if (data.type === 'onMute' && data.value === false) {
         state.hasInteracted = true;
         state.soundUnlocked = true;
+        state.soundConfirmed = true;
         safeJsonSet('pv-sound-unlocked', true);
         player.initialMuted = false;
         remountNearPlayersUnmuted();
@@ -686,6 +691,7 @@
       if (data.type === 'onVolumeChange' && Number(data.value) > 0) {
         state.hasInteracted = true;
         state.soundUnlocked = true;
+        state.soundConfirmed = true;
         safeJsonSet('pv-sound-unlocked', true);
         player.initialMuted = false;
         remountNearPlayersUnmuted();
@@ -1098,16 +1104,13 @@
   function unlockSoundFromGesture() {
     state.hasInteracted = true;
     state.lastUserGestureAt = Date.now();
-    if (state.soundUnlocked) {
-      hideSoundUnlockButtons();
-      var active = Array.from(state.players.values()).find(function (p) { return p.index === state.index; });
-      if (active) requestPlayerPlay(active, true);
-      return;
-    }
     state.soundUnlocked = true;
+    state.soundConfirmed = true;
     safeJsonSet('pv-sound-unlocked', true);
-    // 关键：第一次真实手势时，把已预加载但 muted=1 的当前/邻近播放器一次性重建为 muted=0。
-    // 后续新建 iframe 都会因为 soundUnlocked=true 直接使用 muted=0，不需要每条再手动点音量。
+
+    // First real user tap in this page: hide our own button, rebuild current + nearby preloaded muted iframes as muted=0,
+    // then use postMessage for subsequent slide switches. This avoids every video asking for the official TikTok sound button.
+    hideSoundUnlockButtons();
     remountNearPlayersUnmuted();
     playSlide(state.index, true);
   }
