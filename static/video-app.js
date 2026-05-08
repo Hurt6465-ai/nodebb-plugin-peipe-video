@@ -1,4 +1,4 @@
-/* Peipe /video mobile discover page v17-audio-unlock-once
+/* Peipe /video mobile discover page v18-audio-autoplay-keep-playing
    - Independent /video page, official NodeBB plugin backend feed only
    - Swiper vertical feed with virtual slides
    - TikTok official embed keeps official audio controls; no custom center play button
@@ -10,13 +10,13 @@
 
   if (window.__peipeVideoDiscoverV16AudioReuse) return;
   window.__peipeVideoDiscoverV16AudioReuse = true;
-  window.PEIPE_VIDEO_VERSION = 'v17-audio-unlock-once';
+  window.PEIPE_VIDEO_VERSION = 'v18-audio-autoplay-keep-playing';
 
   var CONFIG = Object.assign({
     cid: 6,
     pageSize: 12,
     preloadAhead: 8,
-    preloadVideoAhead: 3,
+    preloadVideoAhead: 4,
     imageMax: 4,
     coverCacheMs: 7 * 24 * 60 * 60 * 1000,
     translateCacheMs: 3 * 24 * 60 * 60 * 1000,
@@ -109,7 +109,8 @@
     soundUnlocked: !!safeJsonGet('pv-sound-unlocked', false),
     comments: { item: null, posts: [], loading: false, replyTo: null, dragY: 0, dragStartY: 0, dragging: false, dragCandidate: false, dragStartTopZone: false, voiceBlob: null, voiceUrl: '', voiceDuration: 0, mediaRecorder: null, stream: null, chunks: [], startAt: 0, timer: 0 },
     translateLongPressTimer: 0,
-    virtualUpdateTimer: 0
+    virtualUpdateTimer: 0,
+    lastUserGestureAt: 0
   };
 
   function $(sel, root) { return (root || document).querySelector(sel); }
@@ -485,14 +486,17 @@
     shell.innerHTML = '';
     var iframe = document.createElement('iframe');
     iframe.className = 'pv-tiktok-frame';
-    iframe.src = buildPlayerUrl(tk.videoId, !!autoplay, !state.soundUnlocked);
+    // Keep preloaded videos autoplaying muted so the next slide already has moving frames.
+    // Do not rebuild iframe on every slide change; sound is requested with postMessage after user unlock.
+    var shouldTryUnmuted = !!(state.soundUnlocked && state.hasInteracted);
+    iframe.src = buildPlayerUrl(tk.videoId, !!autoplay, !shouldTryUnmuted);
     iframe.allow = 'autoplay; fullscreen; encrypted-media; picture-in-picture';
     iframe.loading = 'eager';
     try { iframe.setAttribute('fetchpriority', index === state.index ? 'high' : 'low'); } catch (e) {}
     iframe.referrerPolicy = 'strict-origin-when-cross-origin';
     iframe.title = 'TikTok Player';
     shell.appendChild(iframe);
-    player = { key: key, index: index, item: item, videoId: tk.videoId, iframe: iframe, ready: false, wantPlay: !!autoplay, status: 'paused', initialMuted: !state.soundUnlocked };
+    player = { key: key, index: index, item: item, videoId: tk.videoId, iframe: iframe, ready: false, wantPlay: !!autoplay, status: 'paused', initialMuted: !shouldTryUnmuted };
     state.players.set(key, player);
     fetchCover(tk.videoId, tk.url).then(function (url) {
       if (!url) return;
@@ -509,11 +513,12 @@
   }
   function preloadNextVideos(fromIndex) {
     var found = 0;
-    var maxScan = Math.min(state.list.length - 1, fromIndex + Math.max(12, CONFIG.preloadAhead + 8));
-    for (var i = Math.max(0, fromIndex); i <= maxScan && found < (CONFIG.preloadVideoAhead || 3); i += 1) {
+    var maxScan = Math.min(state.list.length - 1, fromIndex + Math.max(14, CONFIG.preloadAhead + 10));
+    for (var i = Math.max(0, fromIndex); i <= maxScan && found < (CONFIG.preloadVideoAhead || 4); i += 1) {
       var it = state.list[i];
       if (it && it.tiktoks && it.tiktoks[0]) {
-        prepareSlide(i, i === state.index && (state.hasInteracted || state.soundUnlocked));
+        // autoplay=1 + muted keeps frames warm; active slide will request unMute/play.
+        prepareSlide(i, true);
         found += 1;
       }
     }
@@ -526,7 +531,7 @@
       if (idx !== state.index) softPauseSlide(idx);
     });
     preloadNextVideos(state.index);
-    playSlide(state.index, !!(state.hasInteracted || state.soundUnlocked));
+    playSlide(state.index, false);
     prunePlayers();
   }
   function sendToPlayer(iframe, type, value) {
@@ -544,12 +549,11 @@
     player.iframe.src = buildPlayerUrl(player.videoId, !!autoplay, false);
   }
   function remountNearPlayersUnmuted() {
-    var maxDistance = Math.max(2, CONFIG.preloadVideoAhead || 3);
-    state.players.forEach(function (player) {
-      if (!player || !player.iframe || !player.initialMuted) return;
-      if (Math.abs(player.index - state.index) > maxDistance + 2) return;
-      remountPlayerUnmuted(player, player.index === state.index);
-    });
+    // Avoid remounting every preloaded iframe. Rebuilding a hidden TikTok iframe often makes it stop
+    // until the official play button is tapped. Only the active player may be rebuilt on the first unlock.
+    var current = null;
+    state.players.forEach(function (player) { if (player && player.index === state.index) current = player; });
+    if (current && current.initialMuted) remountPlayerUnmuted(current, true);
   }
   function hardStopPlayer(player) {
     if (!player || !player.iframe) return;
@@ -573,30 +577,36 @@
   function playSlide(index, userGesture) {
     var item = state.list[index];
     if (!item || !(item.tiktoks && item.tiktoks[0])) { preloadNextVideos(index); return; }
-    var player = ensureTikTokPlayer(index, !!userGesture || state.soundUnlocked);
-    if (!player || !player.iframe) return;
-    player.wantPlay = true;
     if (userGesture) {
       state.hasInteracted = true;
+      state.lastUserGestureAt = Date.now();
       state.soundUnlocked = true;
       safeJsonSet('pv-sound-unlocked', true);
-      remountNearPlayersUnmuted();
-      player = ensureTikTokPlayer(index, true) || player;
-    } else if (state.soundUnlocked && player.initialMuted) {
-      // 兜底：如果某个旧预加载 iframe 仍是 muted=1，只重建这一次，不再每次滑动都重建。
-      remountPlayerUnmuted(player, true);
     }
+    var player = ensureTikTokPlayer(index, true);
+    if (!player || !player.iframe) return;
+    player.wantPlay = true;
+
+    // v18: Important: do not remount on slide change. Remounting turns autoplay into a fresh cross-origin
+    // iframe load, which is why the next video stopped until the official TikTok button was tapped.
+    // Only a direct user tap may rebuild the current muted iframe once.
+    if (userGesture && player.initialMuted) {
+      remountPlayerUnmuted(player, true);
+      player = ensureTikTokPlayer(index, true) || player;
+    }
+
     pauseOtherPlayers(player.key);
     var slide = findSlide(index);
     if (slide) slide.classList.add('is-loading');
-    sendToPlayer(player.iframe, 'unMute');
+
+    requestPlayerPlay(player, true);
+    setTimeout(function () { if (player.wantPlay) requestPlayerPlay(player, true); }, 180);
+    setTimeout(function () { if (player.wantPlay && player.status !== 'playing') requestPlayerPlay(player, true); }, 650);
+  }
+  function requestPlayerPlay(player, wantSound) {
+    if (!player || !player.iframe) return;
+    if (wantSound && state.soundUnlocked) sendToPlayer(player.iframe, 'unMute');
     sendToPlayer(player.iframe, 'play');
-    setTimeout(function () {
-      if (!player.wantPlay || !player.iframe || !player.iframe.parentNode) return;
-      sendToPlayer(player.iframe, 'unMute');
-      sendToPlayer(player.iframe, 'play');
-    }, 260);
-    setTimeout(function () { if (player.wantPlay && player.status !== 'playing') markSlidePlaying(index); }, 1600);
   }
   function pauseSlide(index) {
     softPauseSlide(index);
@@ -638,7 +648,7 @@
       if (!player.iframe || player.iframe.contentWindow !== event.source) return;
       if (data.type === 'onPlayerReady') {
         player.ready = true;
-        if (player.wantPlay) { sendToPlayer(player.iframe, 'unMute'); sendToPlayer(player.iframe, 'play'); }
+        if (player.wantPlay) requestPlayerPlay(player, true);
         return;
       }
       if (data.type === 'onStateChange') {
@@ -689,7 +699,7 @@
       if (!(item.tiktoks && item.tiktoks[0])) return;
       var player = Array.from(state.players.values()).find(function (p) { return p.index === index; });
       if (player && player.status === 'playing') pauseSlide(index);
-      else { state.hasInteracted = true; playSlide(index, true); }
+      else { playSlide(index, true); }
     }, CONFIG.doubleTapMs + 20);
   }
   function showHeart(x, y) {
@@ -1067,8 +1077,13 @@
   }
 
   function unlockSoundFromGesture() {
-    if (state.hasInteracted && state.soundUnlocked) return;
     state.hasInteracted = true;
+    state.lastUserGestureAt = Date.now();
+    if (state.soundUnlocked) {
+      var active = Array.from(state.players.values()).find(function (p) { return p.index === state.index; });
+      if (active) requestPlayerPlay(active, true);
+      return;
+    }
     state.soundUnlocked = true;
     safeJsonSet('pv-sound-unlocked', true);
     // 关键：第一次真实手势时，把已预加载但 muted=1 的当前/邻近播放器一次性重建为 muted=0。
