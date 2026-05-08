@@ -1,4 +1,4 @@
-/* Peipe /video mobile discover page v20-custom-sound-one-tap
+/* Peipe /video mobile discover page v21-direct-sound-button
    - Independent /video page, official NodeBB plugin backend feed only
    - Swiper vertical feed with virtual slides
    - TikTok official embed keeps official audio controls; no custom center play button
@@ -10,7 +10,7 @@
 
   if (window.__peipeVideoDiscoverV19CustomSoundPreload) return;
   window.__peipeVideoDiscoverV19CustomSoundPreload = true;
-  window.PEIPE_VIDEO_VERSION = 'v20-custom-sound-one-tap';
+  window.PEIPE_VIDEO_VERSION = 'v21-direct-sound-button';
 
   var CONFIG = Object.assign({
     cid: 6,
@@ -214,6 +214,14 @@
     return m ? 'https://www.tiktok.com/@' + m[1] + '/video/' + m[2] : String(url || '');
   }
 
+  function ensureSoundUnlockStyles() {
+    if (document.getElementById('pv-sound-unlock-style')) return;
+    var style = document.createElement('style');
+    style.id = 'pv-sound-unlock-style';
+    style.textContent = '.pv-unmute-hint{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:120;padding:10px 18px;border:0;border-radius:999px;background:rgba(0,0,0,.66);color:#fff;font-size:15px;font-weight:900;line-height:1.2;box-shadow:0 8px 24px rgba(0,0,0,.28);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);pointer-events:auto!important;touch-action:manipulation;animation:pv-pulse 1.6s ease-in-out infinite}.pv-unmute-hint.is-hidden{display:none!important}.pv-unmute-hint span{pointer-events:none}@keyframes pv-pulse{0%,100%{opacity:.88;transform:translate(-50%,-50%) scale(1)}50%{opacity:1;transform:translate(-50%,-50%) scale(1.05)}}.pv-tiktok-frame{pointer-events:none!important}';
+    document.head.appendChild(style);
+  }
+
   function addPreconnects() {
     ['https://www.tiktok.com', 'https://www.tiktokcdn.com', 'https://p16-sign-va.tiktokcdn.com', 'https://p19-sign.tiktokcdn-us.com'].forEach(function (href) {
       if (document.querySelector('link[rel="preconnect"][href="' + href + '"]')) return;
@@ -384,7 +392,7 @@
         (hasVideo ? '<div class="pv-cover"><img alt="cover"></div>' : '') +
         '<div class="pv-gradient"></div>' +
         (hasVideo ? '<div class="pv-tap-zone" data-index="' + index + '"></div>' : '') +
-        (hasVideo && !state.soundConfirmed ? '<button type="button" class="pv-sound-unlock" data-index="' + index + '" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:120;border:0;border-radius:999px;padding:12px 18px;background:rgba(0,0,0,.66);color:#fff;font-size:15px;font-weight:900;box-shadow:0 8px 24px rgba(0,0,0,.28);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);pointer-events:auto;">🔊 点一下开启声音</button>' : '') +
+        (hasVideo && !state.soundConfirmed ? '<button type="button" class="pv-unmute-hint pv-sound-unlock" data-index="' + index + '"><span>🔊 点一下开启声音</span></button>' : '') +
         '<div class="pv-toolbar">' +
           '<div class="pv-avatar-wrap"><a href="' + authorHref(author) + '">' + avatarHtml + '</a>' +
           (author.uid && !isOwnAuthor(author) ? '<button type="button" class="pv-follow-plus ' + (following ? 'is-following' : '') + '" data-index="' + index + '">' + (following ? '✓' : '+') + '</button>' : '') + '</div>' +
@@ -574,7 +582,7 @@
   }
   function hideSoundUnlockButtons() {
     if (!state.root) return;
-    $$('.pv-sound-unlock', state.root).forEach(function (el) { el.classList.add('is-hidden'); el.style.display = 'none'; });
+    $$('.pv-sound-unlock, .pv-unmute-hint', state.root).forEach(function (el) { el.classList.add('is-hidden'); el.style.display = 'none'; });
   }
   function hardStopPlayer(player) {
     if (!player || !player.iframe) return;
@@ -1102,6 +1110,7 @@
   }
 
   function unlockSoundFromGesture() {
+    if (state.soundConfirmed && state.soundUnlocked) { playSlide(state.index, true); return; }
     state.hasInteracted = true;
     state.lastUserGestureAt = Date.now();
     state.soundUnlocked = true;
@@ -1147,7 +1156,7 @@
   }
   function onRootClick(e) {
     var btn;
-    if ((btn = e.target.closest('.pv-sound-unlock'))) { e.preventDefault(); e.stopPropagation(); unlockSoundFromGesture(); return; }
+    if ((btn = e.target.closest('.pv-sound-unlock, .pv-unmute-hint'))) { e.preventDefault(); e.stopPropagation(); unlockSoundFromGesture(); return; }
     if ((btn = e.target.closest('.pv-like'))) { e.preventDefault(); e.stopPropagation(); var i = Number(btn.dataset.index); toggleLike(state.list[i], findSlide(i), true); return; }
     if ((btn = e.target.closest('.pv-comment-btn'))) { e.preventDefault(); e.stopPropagation(); openComments(state.list[Number(btn.dataset.index)]); return; }
     if ((btn = e.target.closest('.pv-follow-plus'))) { e.preventDefault(); e.stopPropagation(); var idx = Number(btn.dataset.index); toggleFollow(state.list[idx], findSlide(idx)); return; }
@@ -1159,8 +1168,11 @@
     if ((btn = e.target.closest('.pv-text-row'))) { if (!e.target.closest('.pv-translate-btn')) btn.classList.toggle('is-expanded'); }
   }
   function onRootPointerDown(e) {
-    if (!e.target.closest('input, textarea, select, .pv-comments-panel, .pv-compose-panel, .pv-translate-panel, .pv-viewer')) {
+    if (e.target.closest('.pv-sound-unlock, .pv-unmute-hint')) {
+      e.preventDefault();
+      e.stopPropagation();
       unlockSoundFromGesture();
+      return;
     }
     var textRow = e.target.closest('.pv-text-row');
     var translateBtn = e.target.closest('.pv-translate-btn, .pv-comment-translate');
@@ -1204,7 +1216,7 @@
 
   function init() {
     state.root = document.getElementById('peipe-video-app'); if (!state.root) return;
-    document.body.classList.add('pv-video-mode'); addPreconnects(); buildChrome(); showComposeFabInitial();
+    document.body.classList.add('pv-video-mode'); ensureSoundUnlockStyles(); addPreconnects(); buildChrome(); showComposeFabInitial();
     ensureSwiper().then(function () { return loadFeed(true); });
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
