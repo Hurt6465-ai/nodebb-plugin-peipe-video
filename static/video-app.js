@@ -1,13 +1,36 @@
+/* Peipe /video discover page v14-full-debug-safe */
+(function () {
+  window.PEIPE_VIDEO_VERSION = 'v14-full-debug-safe';
+  function showPvRuntimeError(title, detail) {
+    try {
+      var old = document.getElementById('pv-runtime-error');
+      if (old) old.remove();
+      var box = document.createElement('pre');
+      box.id = 'pv-runtime-error';
+      box.style.cssText = 'position:fixed;z-index:2147483647;left:10px;right:10px;top:10px;max-height:70vh;overflow:auto;background:#fff;color:#b91c1c;padding:12px;border-radius:10px;font:12px/1.45 ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;box-shadow:0 6px 30px rgba(0,0,0,.35)';
+      box.textContent = title + '\n\n' + String(detail || '');
+      (document.body || document.documentElement).appendChild(box);
+    } catch (e) {}
+  }
+  window.addEventListener('error', function (e) {
+    showPvRuntimeError('Peipe Video JS ERROR', (e.message || '') + '\n' + (e.filename || '') + ':' + (e.lineno || '') + ':' + (e.colno || '') + '\n' + (e.error && e.error.stack || ''));
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    var r = e.reason;
+    showPvRuntimeError('Peipe Video PROMISE ERROR', (r && (r.stack || r.message)) || r);
+  });
+})();
+
 window.addEventListener('error', function(e){try{var r=document.getElementById('peipe-video-app');if(r&&!r.querySelector('.pv-runtime-error')){var d=document.createElement('div');d.className='pv-runtime-error';d.textContent='前端错误: '+(e.message||'unknown');r.appendChild(d);}}catch(_){}});
-/* Peipe /video discover page v13-full
+/* Peipe /video discover page v14-full
    Fixes TikTok iframe sound bug: never rewrites iframe.src in playSlide/prepareSlide.
    Mobile first. Requires static/lib/swiper-bundle.min.js and .css. */
 (function () {
   'use strict';
 
-  if (window.__peipeVideoDiscoverV13) return;
-  window.PEIPE_VIDEO_VERSION = 'v13-full-from-new-js';
-  window.__peipeVideoDiscoverV13 = true;
+  if (window.__peipeVideoDiscoverV14) return;
+  window.PEIPE_VIDEO_VERSION = 'v14-full-debug-safe';
+  window.__peipeVideoDiscoverV14 = true;
 
   var CONFIG = Object.assign({
     cid: 6,
