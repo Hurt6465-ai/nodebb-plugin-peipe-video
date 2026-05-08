@@ -2,7 +2,7 @@
   "id": "nodebb-plugin-peipe-video",
   "url": "https://peipe.local/nodebb-plugin-peipe-video",
   "name": "Peipe Video Discover",
-  "description": "抖音播放器js.",
+  "description": "Official NodeBB-style /video discover page with cached cid 6 feed aggregation.",
   "version": "0.7.0",
   "library": "./library.js",
   "staticDirs": {
