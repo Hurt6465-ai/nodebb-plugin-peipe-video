@@ -29,10 +29,10 @@ body.template-video .container-xxl { max-width:none !important; width:100vw !imp
 #peipe-video-app { position:fixed !important; inset:0 !important; z-index:2147483000 !important; width:100vw !important; height:100dvh !important; background:#000 !important; color:#fff !important; overflow:hidden !important; }
 .pv-init-loading { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:#fff; background:#000; }
 </style>
-<div id="peipe-video-app" class="pv-root" data-cid="{cid}" data-version="v17-audio-unlock-once">
+<div id="peipe-video-app" class="pv-root" data-cid="{cid}" data-version="v18-audio-autoplay-keep-playing">
   <div class="pv-init-loading">发现加载中...</div>
 </div>
-<link rel="stylesheet" href="/plugins/nodebb-plugin-peipe-video/static/video-app.css?v=17">
+<link rel="stylesheet" href="/plugins/nodebb-plugin-peipe-video/static/video-app.css?v=18">
 <script>
 window.PEIPE_VIDEO_CONFIG = Object.assign({}, window.PEIPE_VIDEO_CONFIG || {}, {
   cid: {cid},
@@ -44,4 +44,4 @@ window.PEIPE_VIDEO_CONFIG = Object.assign({}, window.PEIPE_VIDEO_CONFIG || {}, {
   swiperCdnJs: '/plugins/nodebb-plugin-peipe-video/static/lib/swiper-bundle.min.js'
 });
 </script>
-<script src="/plugins/nodebb-plugin-peipe-video/static/video-app.js?v=17"></script>
+<script src="/plugins/nodebb-plugin-peipe-video/static/video-app.js?v=18"></script>
