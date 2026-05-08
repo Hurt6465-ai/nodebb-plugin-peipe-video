@@ -1,4 +1,4 @@
-<style id="pv-critical-v21">
+<style id="pv-critical-v22">
 html, body { margin:0 !important; padding:0 !important; background:#000 !important; overflow:hidden !important; }
 body.page-video .navbar,
 body.page-video [component="navbar"],
@@ -29,7 +29,7 @@ body.template-video .container-xxl { max-width:none !important; width:100vw !imp
 #peipe-video-app { position:fixed !important; inset:0 !important; z-index:2147483000 !important; width:100vw !important; height:100dvh !important; background:#000 !important; color:#fff !important; overflow:hidden !important; }
 .pv-init-loading { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:#fff; background:#000; }
 </style>
-<div id="peipe-video-app" class="pv-root" data-cid="{cid}" data-version="v21-direct-sound-button">
+<div id="peipe-video-app" class="pv-root" data-cid="{cid}" data-version="v22-direct-sound-button">
   <div class="pv-init-loading">发现加载中...</div>
 </div>
 <link rel="stylesheet" href="/plugins/nodebb-plugin-peipe-video/static/video-app.css?v=21">
