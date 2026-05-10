@@ -1,24 +1,26 @@
-/* Peipe /video mobile discover page v8
+/* Peipe /video mobile discover page v9
    - Independent /video page, official NodeBB plugin backend feed only
    - Swiper vertical feed with virtual slides
    - TikTok official embed keeps official audio controls
-   - v8 audio fix: one-tap sound intent, soft-pause iframes, reliable TikTok mute/error handling
+   - v9 audio fix: first video starts muted, sound opens only after explicit tap, one-video preload
    - Image posts use horizontal carousel; video posts use vertical feed
    - Comment drawer, replies, translate for text/comments/input
 */
 (function () {
   'use strict';
 
-  if (window.__peipeVideoDiscoverV7) return;
+  if (window.__peipeVideoDiscoverV9) return;
+  window.__peipeVideoDiscoverV9 = true;
   window.__peipeVideoDiscoverV7 = true;
 
   var CONFIG = Object.assign({
     cid: 6,
     pageSize: 12,
-    preloadAhead: 8,
-    preloadVideoAhead: 3,
-    // Keep nearby TikTok iframes alive so their internal volume state is not reset on every swipe.
-    audioKeepAround: 14,
+    // Keep the UI light: render only a small window and create at most one next TikTok iframe.
+    preloadAhead: 1,
+    preloadVideoAhead: 1,
+    // Keep only the current and the next/previous nearby TikTok iframes alive.
+    audioKeepAround: 2,
     audioRetryDelays: [60, 220, 650, 1200],
     imageMax: 4,
     coverCacheMs: 7 * 24 * 60 * 60 * 1000,
@@ -112,10 +114,10 @@
     },
     viewer: { images: [], index: 0, swiper: null, startX: 0, startY: 0, down: false },
     imageSwipers: new Map(),
-    // soundUnlocked means the user has expressed intent to hear sound. It is not treated as
-    // proof that every new TikTok iframe is already unmuted; TikTok callbacks confirm that.
-    soundUnlocked: !!safeJsonGet('pv-sound-unlocked', false),
-    soundConfirmed: !!safeJsonGet('pv-sound-confirmed', false),
+    // Always start a new /video page visit muted. The user must explicitly tap the sound hint
+    // before we send unMute. Saved localStorage values are intentionally ignored on startup.
+    soundUnlocked: false,
+    soundConfirmed: false,
     soundHintVisible: false,
     comments: { item: null, posts: [], loading: false, replyTo: null, dragY: 0, dragStartY: 0, dragging: false, dragCandidate: false, dragStartTopZone: false, voiceBlob: null, voiceUrl: '', voiceDuration: 0, mediaRecorder: null, stream: null, chunks: [], startAt: 0, timer: 0 },
     translateLongPressTimer: 0
@@ -306,8 +308,8 @@
       passiveListeners: false,
       virtual: {
         enabled: true,
-        addSlidesBefore: 2,
-        addSlidesAfter: Math.max(10, CONFIG.preloadAhead + 4),
+        addSlidesBefore: 1,
+        addSlidesAfter: Math.max(1, CONFIG.preloadAhead || 1),
         slides: state.list.map(renderSlideHtml)
       },
       on: {
@@ -350,9 +352,10 @@
     $$('.pv-slide-item', state.root).forEach(function (slide) {
       var index = Number(slide.dataset.index || -1);
       slide.classList.toggle('is-active', index === state.index);
-      prepareSlide(index, false);
     });
     initImageSwipers();
+    // Do not create TikTok iframes for every virtual slide. Only prepare current + one next video.
+    prepareSlide(state.index, false);
     preloadNextVideos(state.index);
   }
 
@@ -520,11 +523,14 @@
   }
   function preloadNextVideos(fromIndex) {
     var found = 0;
-    var maxScan = Math.min(state.list.length - 1, fromIndex + Math.max(12, CONFIG.preloadAhead + 8));
-    for (var i = Math.max(0, fromIndex); i <= maxScan && found < (CONFIG.preloadVideoAhead || 3); i += 1) {
+    var limit = Math.max(0, Number(CONFIG.preloadVideoAhead || 0));
+    if (!limit) return;
+    var maxScan = Math.min(state.list.length - 1, fromIndex + Math.max(2, limit + 1));
+    // Preload only videos after the current one. Current playback is handled by activateCurrent/playSlide.
+    for (var i = Math.max(0, fromIndex + 1); i <= maxScan && found < limit; i += 1) {
       var it = state.list[i];
       if (it && it.tiktoks && it.tiktoks[0]) {
-        prepareSlide(i, i === state.index && (state.hasInteracted || state.soundUnlocked));
+        prepareSlide(i, false);
         found += 1;
       }
     }
@@ -632,6 +638,8 @@
       hideSoundHint(index);
       requestPlayerSound(player, true);
     } else {
+      // Default path: keep the first/current video muted, then play.
+      sendToPlayer(player.iframe, 'mute');
       sendToPlayer(player.iframe, 'play');
       showSoundHint(index, TEXT.soundHint);
     }
@@ -640,7 +648,7 @@
       setTimeout(function () {
         if (!player.wantPlay || player.index !== state.index) return;
         if (player.wantSound) requestPlayerSound(player, true);
-        else sendToPlayer(player.iframe, 'play');
+        else { sendToPlayer(player.iframe, 'mute'); sendToPlayer(player.iframe, 'play'); }
       }, delay);
     });
 
@@ -661,7 +669,7 @@
   function pauseOtherPlayers(currentKey) {
     state.players.forEach(function (p, key) {
       if (key === currentKey) return;
-      var farAway = Math.abs(p.index - state.index) > Math.max(4, CONFIG.audioKeepAround || 14);
+      var farAway = Math.abs(p.index - state.index) > Math.max(1, CONFIG.audioKeepAround || 2);
       p.wantPlay = false; p.status = 'paused';
       if (p.iframe) {
         sendToPlayer(p.iframe, 'pause');
@@ -673,7 +681,7 @@
     });
   }
   function prunePlayers() {
-    var keep = Math.max(CONFIG.preloadAhead + 2, CONFIG.audioKeepAround || 14);
+    var keep = Math.max(1, CONFIG.audioKeepAround || 2);
     state.players.forEach(function (p, key) {
       if (Math.abs(p.index - state.index) <= keep) return;
       destroyPlayer(p, key);
@@ -700,7 +708,7 @@
         player.ready = true;
         if (player.wantPlay) {
           if (player.wantSound || state.soundUnlocked) requestPlayerSound(player, true);
-          else sendToPlayer(player.iframe, 'play');
+          else { sendToPlayer(player.iframe, 'mute'); sendToPlayer(player.iframe, 'play'); }
         }
         return;
       }
@@ -757,7 +765,7 @@
       if (!(item.tiktoks && item.tiktoks[0])) return;
       var player = Array.from(state.players.values()).find(function (p) { return p.index === index; });
       if (player && player.status === 'playing') pauseSlide(index);
-      else { rememberSoundWanted(false); playSlide(index, true); }
+      else { state.hasInteracted = true; playSlide(index, !!state.soundUnlocked); }
     }, CONFIG.doubleTapMs + 20);
   }
   function showHeart(x, y) {
@@ -1184,9 +1192,6 @@
     if ((btn = e.target.closest('.pv-text-row'))) { if (!e.target.closest('.pv-translate-btn')) btn.classList.toggle('is-expanded'); }
   }
   function onRootPointerDown(e) {
-    if (!e.target.closest('input, textarea, select, .pv-comments-panel, .pv-compose-panel, .pv-translate-panel, .pv-viewer')) {
-      unlockSoundFromGesture();
-    }
     var textRow = e.target.closest('.pv-text-row');
     var translateBtn = e.target.closest('.pv-translate-btn, .pv-comment-translate');
     if (textRow || translateBtn) { clearTimeout(state.translateLongPressTimer); state.translateLongPressTimer = setTimeout(function () { openTranslateSettings(); }, 650); }
