@@ -1631,9 +1631,9 @@ body.pv-video-mode [component="sidebar"] {
   align-items: center !important;
   width: 100% !important;
   min-height: 44px !important;
-  border-radius: 0 !important;
-  background: transparent !important;
-  padding: 0 !important;
+  border-radius: 22px !important;
+  background: rgba(17,24,39,.075) !important;
+  padding: 0 6px !important;
   box-shadow: none !important;
   border: 0 !important;
 }
@@ -1642,11 +1642,11 @@ body.pv-video-mode [component="sidebar"] {
   height: 42px !important;
   min-width: 0 !important;
   border: 0 !important;
-  border-radius: 20px !important;
-  background: rgba(17,24,39,.075) !important;
+  border-radius: 0 !important;
+  background: transparent !important;
   box-shadow: none !important;
   outline: none !important;
-  padding: 0 14px !important;
+  padding: 0 8px !important;
   color: #111827 !important;
   font-size: 15px !important;
 }
@@ -1758,4 +1758,64 @@ body.pv-video-mode [component="sidebar"] {
   .pv-desc { bottom: max(116px, calc(var(--pv-bottom-safe) + 110px)) !important; right: 76px !important; }
   .pv-toolbar { bottom: max(176px, calc(var(--pv-bottom-safe) + 168px)) !important; }
   .pv-tap-zone { bottom: max(208px, calc(var(--pv-bottom-safe) + 200px)) !important; }
+}
+
+/* Peipe video v12 stability fixes
+   - autoplay video stays silent; users enable sound with TikTok official control
+   - comment drawer height follows content up to a safe max
+   - remove the extra outer rectangle around the comment input
+*/
+.pv-comments-panel {
+  height: auto !important;
+  min-height: 188px !important;
+  max-height: min(90dvh, 780px) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+}
+
+.pv-comments-list {
+  flex: 0 1 auto !important;
+  min-height: 0 !important;
+  max-height: min(58dvh, 520px) !important;
+  overflow-y: auto !important;
+  overscroll-behavior: contain !important;
+  -webkit-overflow-scrolling: touch !important;
+}
+
+.pv-empty-comments,
+.pv-comments-list .pv-meta {
+  min-height: 44px !important;
+  display: flex !important;
+  align-items: center !important;
+}
+
+.pv-comment-send-row {
+  flex: 0 0 auto !important;
+  background: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border-top: 0 !important;
+  padding: 8px 4px max(8px, var(--pv-bottom-safe)) !important;
+}
+
+.pv-comment-input-wrap {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+  padding: 0 !important;
+  gap: 6px !important;
+}
+
+.pv-comment-input-wrap .pv-comment-input {
+  height: 42px !important;
+  border-radius: 21px !important;
+  background: rgba(17,24,39,.075) !important;
+  padding: 0 14px !important;
+}
+
+.pv-comment-input-wrap .pv-comment-input-translate,
+.pv-comment-input-wrap .pv-comment-action-btn {
+  background: transparent !important;
 }
