@@ -4,17 +4,17 @@
   <div class="pv-init-loading">[[peipe-video:loading]]</div>
 </div>
 
-<link rel="stylesheet" href="{relative_path}/plugins/nodebb-plugin-peipe-video/static/video-app.css?v=11">
+<link rel="stylesheet" href="{relative_path}/plugins/nodebb-plugin-peipe-video/static/video-app.css?v=12">
 
 <script>
   window.PEIPE_VIDEO_CONFIG = Object.assign({}, window.PEIPE_VIDEO_CONFIG || {}, {
     cid: {cid},
     pageSize: 12,
 
-    // v11：当前视频静音自动播放，只预载 1 个 TikTok iframe，提前预载多个封面
-    preloadAhead: 1,
-    preloadVideoAhead: 1,
-    virtualTotal: 3,
+    // 预载设置：视频自动静音播放，预载下2个视频，预热6个封面
+    preloadAhead: 2,
+    preloadVideoAhead: 2, 
+    virtualTotal: 4,
     officialControlsMs: 500,
     coverPreloadAhead: 6,
 
@@ -24,6 +24,6 @@
   });
 </script>
 
-<script src="{relative_path}/plugins/nodebb-plugin-peipe-video/static/video-app.js?v=11"></script>
+<script src="{relative_path}/plugins/nodebb-plugin-peipe-video/static/video-app.js?v=12"></script>
 
 <!-- IMPORT partials/footer.tpl -->
