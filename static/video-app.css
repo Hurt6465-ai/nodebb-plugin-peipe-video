@@ -1760,54 +1760,63 @@ body.pv-video-mode [component="sidebar"] {
   .pv-tap-zone { bottom: max(208px, calc(var(--pv-bottom-safe) + 200px)) !important; }
 }
 
-
-/* Peipe video v8 requested fixes: manual sound, adaptive comments, flat input row */
-.pv-comments-panel {
-  height: auto !important;
-  min-height: 0 !important;
-  max-height: min(90dvh, 780px) !important;
-  padding: 8px 10px max(8px, var(--pv-bottom-safe)) !important;
-  display: flex !important;
-  flex-direction: column !important;
-  overflow: hidden !important;
-}
-
-.pv-comments-list {
-  flex: 0 1 auto !important;
-  min-height: 0 !important;
-  max-height: calc(90dvh - 156px) !important;
-  overflow: auto !important;
-  padding: 6px 2px 12px !important;
-}
-
-.pv-comments-list .pv-empty-comments {
-  padding: 10px 2px 14px !important;
-}
-
-.pv-comment-send-row {
-  background: transparent !important;
-  border-top: 0 !important;
-  padding: 8px 0 max(8px, var(--pv-bottom-safe)) !important;
-}
-
-.pv-comment-input-wrap {
-  background: transparent !important;
+/* Peipe video v8 audio-unlock patch */
+.pv-sound-hint {
+  position: absolute !important;
+  left: 50% !important;
+  top: 50% !important;
+  z-index: 15 !important;
+  transform: translate(-50%, -50%) scale(.96) !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  max-width: min(78vw, 340px) !important;
+  min-height: 42px !important;
+  padding: 10px 15px !important;
   border: 0 !important;
-  box-shadow: none !important;
-  border-radius: 0 !important;
-  padding: 0 !important;
+  border-radius: 999px !important;
+  background: rgba(0,0,0,.54) !important;
+  color: #fff !important;
+  font-size: 14px !important;
+  font-weight: 900 !important;
+  line-height: 1.2 !important;
+  box-shadow: 0 8px 30px rgba(0,0,0,.32) !important;
+  backdrop-filter: blur(16px) saturate(1.15) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(1.15) !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transition: opacity .16s ease, transform .16s ease !important;
+  touch-action: manipulation !important;
 }
 
-.pv-comment-input-wrap .pv-comment-input {
-  background: transparent !important;
-  border: 0 !important;
-  box-shadow: none !important;
-  outline: 0 !important;
+.pv-sound-hint span {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 24px !important;
+  height: 24px !important;
+  flex: 0 0 auto !important;
+  font-size: 17px !important;
+  line-height: 1 !important;
 }
 
-.pv-comment-input-wrap .pv-comment-input:focus {
-  background: transparent !important;
-  border: 0 !important;
-  box-shadow: none !important;
-  outline: 0 !important;
+.pv-sound-hint b {
+  display: block !important;
+  min-width: 0 !important;
+  color: #fff !important;
+  font-size: 14px !important;
+  font-weight: 900 !important;
+  white-space: nowrap !important;
+  text-shadow: 0 1px 2px rgba(0,0,0,.28) !important;
+}
+
+.pv-sound-hint.is-show {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  transform: translate(-50%, -50%) scale(1) !important;
+}
+
+.pv-slide-item.is-playing .pv-sound-hint:not(.is-show) {
+  opacity: 0 !important;
+  pointer-events: none !important;
 }
