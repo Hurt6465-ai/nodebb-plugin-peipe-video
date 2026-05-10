@@ -1820,3 +1820,9 @@ body.pv-video-mode [component="sidebar"] {
   opacity: 0 !important;
   pointer-events: none !important;
 }
+
+
+/* Peipe video v9 audio behavior: sound starts muted; user must tap sound hint to unmute. */
+.pv-sound-hint.is-show {
+  pointer-events: auto !important;
+}
