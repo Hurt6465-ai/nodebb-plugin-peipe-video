@@ -1760,43 +1760,101 @@ body.pv-video-mode [component="sidebar"] {
   .pv-tap-zone { bottom: max(208px, calc(var(--pv-bottom-safe) + 200px)) !important; }
 }
 
-/* Peipe video v12 stability fixes
-   - autoplay video stays silent; users enable sound with TikTok official control
-   - comment drawer height follows content up to a safe max
-   - remove the extra outer rectangle around the comment input
+
+/* Peipe video v13 stable fallback
+   - silent autoplay video
+   - sound by TikTok official volume button only
+   - adaptive comments drawer
+   - no outer rectangle around comment input
 */
+#peipe-video-app.pv-root,
+#peipe-video-app .pv-page {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 1500 !important;
+  width: 100vw !important;
+  height: 100dvh !important;
+  max-width: none !important;
+  left: 0 !important;
+  right: 0 !important;
+  transform: none !important;
+  background: #000 !important;
+  overflow: hidden !important;
+}
+
+body.pv-video-mode > .navbar,
+body.pv-video-mode [component="navbar"],
+body.pv-video-mode .breadcrumb,
+body.pv-video-mode footer,
+body.pv-video-mode [component="sidebar"] {
+  display: none !important;
+}
+
+body.pv-video-mode #content,
+body.pv-video-mode .container,
+body.pv-video-mode .container-lg,
+body.pv-video-mode .container-md,
+body.pv-video-mode .container-sm,
+body.pv-video-mode .container-xl,
+body.pv-video-mode .container-xxl {
+  max-width: none !important;
+  width: 100% !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+.pv-video-shell {
+  --pv-crop-top: 0px !important;
+  --pv-crop-right: 0px !important;
+  --pv-crop-bottom: 0px !important;
+}
+
+.pv-tiktok-frame {
+  top: 0 !important;
+  left: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  pointer-events: auto !important;
+}
+
+/* Keep our tap layer away from TikTok's official controls. */
+.pv-tap-zone {
+  right: 112px !important;
+  bottom: max(226px, calc(var(--pv-bottom-safe) + 218px)) !important;
+}
+
+/* Comments drawer adapts to content instead of always occupying almost the whole screen. */
 .pv-comments-panel {
   height: auto !important;
-  min-height: 188px !important;
-  max-height: min(90dvh, 780px) !important;
-  display: flex !important;
-  flex-direction: column !important;
+  min-height: 0 !important;
+  max-height: min(82dvh, 720px) !important;
+  padding: 8px 10px max(8px, var(--pv-bottom-safe)) !important;
   overflow: hidden !important;
 }
 
 .pv-comments-list {
   flex: 0 1 auto !important;
   min-height: 0 !important;
-  max-height: min(58dvh, 520px) !important;
+  max-height: calc(min(82dvh, 720px) - 142px) !important;
   overflow-y: auto !important;
-  overscroll-behavior: contain !important;
-  -webkit-overflow-scrolling: touch !important;
+  padding: 6px 2px 10px !important;
 }
 
-.pv-empty-comments,
-.pv-comments-list .pv-meta {
+.pv-empty-comments {
   min-height: 44px !important;
   display: flex !important;
   align-items: center !important;
+  justify-content: center !important;
 }
 
+/* Remove the long outer rectangle around the comment input. */
 .pv-comment-send-row {
-  flex: 0 0 auto !important;
   background: transparent !important;
+  border-top: 0 !important;
+  box-shadow: none !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
-  border-top: 0 !important;
-  padding: 8px 4px max(8px, var(--pv-bottom-safe)) !important;
+  padding: 6px 4px max(6px, var(--pv-bottom-safe)) !important;
 }
 
 .pv-comment-input-wrap {
@@ -1805,17 +1863,22 @@ body.pv-video-mode [component="sidebar"] {
   box-shadow: none !important;
   border-radius: 0 !important;
   padding: 0 !important;
-  gap: 6px !important;
 }
 
-.pv-comment-input-wrap .pv-comment-input {
-  height: 42px !important;
-  border-radius: 21px !important;
-  background: rgba(17,24,39,.075) !important;
-  padding: 0 14px !important;
+.pv-comment-input-wrap .pv-comment-input,
+.pv-comment-input {
+  height: 40px !important;
+  border-radius: 20px !important;
+  background: rgba(17,24,39,.07) !important;
+  border: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+  padding: 0 12px !important;
 }
 
 .pv-comment-input-wrap .pv-comment-input-translate,
 .pv-comment-input-wrap .pv-comment-action-btn {
   background: transparent !important;
+  box-shadow: none !important;
+  border: 0 !important;
 }
