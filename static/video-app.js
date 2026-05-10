@@ -1,16 +1,16 @@
-/* Peipe /video mobile discover page v10
+/* Peipe /video mobile discover page v11
    - Independent /video page, official NodeBB plugin backend feed only
    - Swiper vertical feed with virtual slides
    - TikTok official embed keeps official audio controls; no custom sound button
-   - v10 audio: default muted, sound only via official TikTok control, one-video preload
+   - v11 audio: muted autoplay restored; sound only via official TikTok control; one-video iframe preload + multi-cover preload
    - Image posts use horizontal carousel; video posts use vertical feed
    - Comment drawer, replies, translate for text/comments/input
 */
 (function () {
   'use strict';
 
-  if (window.__peipeVideoDiscoverV10) return;
-  window.__peipeVideoDiscoverV10 = true;
+  if (window.__peipeVideoDiscoverV11) return;
+  window.__peipeVideoDiscoverV11 = true;
   window.__peipeVideoDiscoverV7 = true;
 
   var CONFIG = Object.assign({
@@ -22,6 +22,9 @@
     virtualTotal: 3,
     audioKeepAround: 2,
     officialControlsMs: 500,
+    // Only preload one actual TikTok iframe, but warm several covers/images ahead.
+    coverPreloadAhead: 6,
+    playRetryDelays: [0, 80, 220, 520, 1000, 1600],
     imageMax: 4,
     coverCacheMs: 7 * 24 * 60 * 60 * 1000,
     translateCacheMs: 3 * 24 * 60 * 60 * 1000,
@@ -111,6 +114,7 @@
     },
     viewer: { images: [], index: 0, swiper: null, startX: 0, startY: 0, down: false },
     imageSwipers: new Map(),
+    coverPreloadSet: new Set(),
     // Always start muted; sound is controlled only by TikTok's official UI.
     officialControlsTimer: 0,
     comments: { item: null, posts: [], loading: false, replyTo: null, dragY: 0, dragStartY: 0, dragging: false, dragCandidate: false, dragStartTopZone: false, voiceBlob: null, voiceUrl: '', voiceDuration: 0, mediaRecorder: null, stream: null, chunks: [], startAt: 0, timer: 0 },
@@ -349,8 +353,11 @@
       slide.classList.toggle('is-active', index === state.index);
     });
     initImageSwipers();
-    prepareSlide(state.index, false);
+    // Current video must be created with autoplay=1&muted=1. Creating it first as
+    // autoplay=0 can make TikTok show the official "tap to play" overlay.
+    prepareSlide(state.index, true);
     preloadNextVideos(state.index);
+    preloadCovers(state.index);
   }
 
   function renderSlideHtml(item, index) {
@@ -482,7 +489,16 @@
     var tk = item.tiktoks[0];
     var key = playerKey(index, tk.videoId);
     var player = state.players.get(key);
-    if (player && player.iframe && player.iframe.parentNode) return player;
+    if (player && player.iframe && player.iframe.parentNode) {
+      // If the current slide was previously created for preload/autoplay=0, upgrade it
+      // to muted autoplay when it becomes active. This restores automatic playback.
+      if (autoplay && !/[?&]autoplay=1(?:&|$)/.test(player.iframe.src)) {
+        player.iframe.src = buildPlayerUrl(player.videoId, true);
+        player.ready = false;
+      }
+      player.iframe.fetchPriority = index === state.index ? 'high' : 'low';
+      return player;
+    }
     var shell = $('.pv-video-shell', slide);
     if (!shell) return null;
     shell.innerHTML = '';
@@ -534,7 +550,9 @@
         pauseSlide(idx);
       }
     });
+    prepareSlide(state.index, true);
     preloadNextVideos(state.index);
+    preloadCovers(state.index);
     playSlide(state.index, false);
     revealOfficialControls(state.index);
     prunePlayers();
@@ -581,7 +599,7 @@
   function playSlide(index, userGesture) {
     var item = state.list[index];
     if (!item || !(item.tiktoks && item.tiktoks[0])) { preloadNextVideos(index); return; }
-    var player = ensureTikTokPlayer(index, index === state.index);
+    var player = ensureTikTokPlayer(index, true);
     if (!player || !player.iframe) return;
     player.wantPlay = true;
     state.hasInteracted = !!(state.hasInteracted || userGesture);
@@ -589,14 +607,15 @@
     var slide = findSlide(index);
     if (slide) slide.classList.add('is-loading');
 
-    // Default behavior is muted autoplay through the official player URL (muted=1).
-    // Never request or force sound here; users control sound only with TikTok's official volume button.
-    sendToPlayer(player.iframe, 'play');
-    [80, 260, 720].forEach(function (delay) {
+    // Muted autoplay: keep sound off by default, then play automatically. We never
+    // send unMute; the official TikTok volume button is the only way to turn sound on.
+    var delays = CONFIG.playRetryDelays || [0, 80, 220, 520, 1000, 1600];
+    delays.forEach(function (delay) {
       setTimeout(function () {
         if (!player.wantPlay || player.index !== state.index) return;
+        sendToPlayer(player.iframe, 'mute');
         sendToPlayer(player.iframe, 'play');
-      }, delay);
+      }, Math.max(0, Number(delay) || 0));
     });
     setTimeout(function () { if (player.wantPlay && player.status !== 'playing') markSlidePlaying(index); }, 1800);
   }
@@ -649,7 +668,7 @@
       if (!player.iframe || player.iframe.contentWindow !== event.source) return;
       if (data.type === 'onPlayerReady') {
         player.ready = true;
-        if (player.wantPlay) sendToPlayer(player.iframe, 'play');
+        if (player.wantPlay) { sendToPlayer(player.iframe, 'mute'); sendToPlayer(player.iframe, 'play'); }
         return;
       }
       if (data.type === 'onStateChange') {
@@ -678,6 +697,39 @@
       .then(function (r) { return r.ok ? r.json() : {}; })
       .then(function (json) { var thumb = json.thumbnail_url || ''; if (thumb) safeJsonSet(coverCacheKey(videoId), { url: thumb, expiresAt: Date.now() + CONFIG.coverCacheMs }); return thumb; })
       .catch(function () { return ''; });
+  }
+  function warmImage(url) {
+    if (!url) return;
+    try {
+      var img = new Image();
+      img.decoding = 'async';
+      img.loading = 'eager';
+      img.src = url;
+    } catch (e) {}
+  }
+  function preloadCovers(fromIndex) {
+    var ahead = Math.max(0, Number(CONFIG.coverPreloadAhead || 0));
+    if (!ahead || !state.list.length) return;
+    var max = Math.min(state.list.length - 1, Math.max(0, fromIndex) + ahead);
+    for (var i = Math.max(0, fromIndex); i <= max; i += 1) {
+      var it = state.list[i];
+      if (!it) continue;
+      if (it.tiktoks && it.tiktoks[0]) {
+        var tk = it.tiktoks[0];
+        var key = 'tk:' + tk.videoId;
+        if (state.coverPreloadSet.has(key)) continue;
+        state.coverPreloadSet.add(key);
+        fetchCover(tk.videoId, tk.url).then(warmImage);
+      }
+      if (it.images && it.images.length) {
+        it.images.slice(0, CONFIG.imageMax).forEach(function (src) {
+          var key2 = 'img:' + src;
+          if (state.coverPreloadSet.has(key2)) return;
+          state.coverPreloadSet.add(key2);
+          warmImage(src);
+        });
+      }
+    }
   }
 
   function handleTap(e, index) {
