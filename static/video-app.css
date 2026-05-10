@@ -1761,100 +1761,33 @@ body.pv-video-mode [component="sidebar"] {
 }
 
 
-/* Peipe video v13 stable fallback
-   - silent autoplay video
-   - sound by TikTok official volume button only
-   - adaptive comments drawer
-   - no outer rectangle around comment input
-*/
-#peipe-video-app.pv-root,
-#peipe-video-app .pv-page {
-  position: fixed !important;
-  inset: 0 !important;
-  z-index: 1500 !important;
-  width: 100vw !important;
-  height: 100dvh !important;
-  max-width: none !important;
-  left: 0 !important;
-  right: 0 !important;
-  transform: none !important;
-  background: #000 !important;
-  overflow: hidden !important;
-}
-
-body.pv-video-mode > .navbar,
-body.pv-video-mode [component="navbar"],
-body.pv-video-mode .breadcrumb,
-body.pv-video-mode footer,
-body.pv-video-mode [component="sidebar"] {
-  display: none !important;
-}
-
-body.pv-video-mode #content,
-body.pv-video-mode .container,
-body.pv-video-mode .container-lg,
-body.pv-video-mode .container-md,
-body.pv-video-mode .container-sm,
-body.pv-video-mode .container-xl,
-body.pv-video-mode .container-xxl {
-  max-width: none !important;
-  width: 100% !important;
-  padding: 0 !important;
-  margin: 0 !important;
-}
-
-.pv-video-shell {
-  --pv-crop-top: 0px !important;
-  --pv-crop-right: 0px !important;
-  --pv-crop-bottom: 0px !important;
-}
-
-.pv-tiktok-frame {
-  top: 0 !important;
-  left: 0 !important;
-  width: 100% !important;
-  height: 100% !important;
-  pointer-events: auto !important;
-}
-
-/* Keep our tap layer away from TikTok's official controls. */
-.pv-tap-zone {
-  right: 112px !important;
-  bottom: max(226px, calc(var(--pv-bottom-safe) + 218px)) !important;
-}
-
-/* Comments drawer adapts to content instead of always occupying almost the whole screen. */
+/* Peipe video v8 requested fixes: manual sound, adaptive comments, flat input row */
 .pv-comments-panel {
   height: auto !important;
   min-height: 0 !important;
-  max-height: min(82dvh, 720px) !important;
+  max-height: min(90dvh, 780px) !important;
   padding: 8px 10px max(8px, var(--pv-bottom-safe)) !important;
+  display: flex !important;
+  flex-direction: column !important;
   overflow: hidden !important;
 }
 
 .pv-comments-list {
   flex: 0 1 auto !important;
   min-height: 0 !important;
-  max-height: calc(min(82dvh, 720px) - 142px) !important;
-  overflow-y: auto !important;
-  padding: 6px 2px 10px !important;
+  max-height: calc(90dvh - 156px) !important;
+  overflow: auto !important;
+  padding: 6px 2px 12px !important;
 }
 
-.pv-empty-comments {
-  min-height: 44px !important;
-  display: flex !important;
-  align-items: center !important;
-  justify-content: center !important;
+.pv-comments-list .pv-empty-comments {
+  padding: 10px 2px 14px !important;
 }
 
-/* Remove the long outer rectangle around the comment input. */
 .pv-comment-send-row {
   background: transparent !important;
   border-top: 0 !important;
-  box-shadow: none !important;
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-  padding: 6px 4px max(6px, var(--pv-bottom-safe)) !important;
+  padding: 8px 0 max(8px, var(--pv-bottom-safe)) !important;
 }
 
 .pv-comment-input-wrap {
@@ -1865,63 +1798,16 @@ body.pv-video-mode .container-xxl {
   padding: 0 !important;
 }
 
-.pv-comment-input-wrap .pv-comment-input,
-.pv-comment-input {
-  height: 40px !important;
-  border-radius: 20px !important;
-  background: rgba(17,24,39,.07) !important;
-  border: 0 !important;
-  outline: 0 !important;
-  box-shadow: none !important;
-  padding: 0 12px !important;
-}
-
-.pv-comment-input-wrap .pv-comment-input-translate,
-.pv-comment-input-wrap .pv-comment-action-btn {
+.pv-comment-input-wrap .pv-comment-input {
   background: transparent !important;
-  box-shadow: none !important;
   border: 0 !important;
-}
-
-
-/* Peipe video v14: stop TikTok iframe click-through jumps; use our own sound button; preload remains one video. */
-.pv-tiktok-frame {
-  pointer-events: none !important;
-}
-
-.pv-sound-toggle {
-  position: absolute !important;
-  right: 14px !important;
-  top: max(18px, calc(var(--pv-top-safe) + 12px)) !important;
-  z-index: 16 !important;
-  width: 42px !important;
-  height: 42px !important;
-  border: 0 !important;
-  border-radius: 999px !important;
-  background: rgba(0,0,0,.36) !important;
-  color: #fff !important;
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  font-size: 20px !important;
-  line-height: 1 !important;
   box-shadow: none !important;
-  backdrop-filter: blur(10px) !important;
-  -webkit-backdrop-filter: blur(10px) !important;
-  touch-action: manipulation !important;
+  outline: 0 !important;
 }
 
-.pv-sound-toggle.is-on {
-  background: rgba(255,36,66,.86) !important;
-}
-
-.pv-sound-toggle .pv-sound-icon {
-  display: block !important;
-  transform: translateY(-1px) !important;
-}
-
-/* Keep the tap layer below the sound button and away from right-side actions. */
-.pv-tap-zone {
-  right: 104px !important;
-  bottom: max(226px, calc(var(--pv-bottom-safe) + 218px)) !important;
+.pv-comment-input-wrap .pv-comment-input:focus {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  outline: 0 !important;
 }
