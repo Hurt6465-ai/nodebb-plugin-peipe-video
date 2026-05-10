@@ -1,4 +1,4 @@
-/* Peipe /video mobile discover page v7
+/* Peipe /video mobile discover page v8
    - Independent /video page, official NodeBB plugin backend feed only
    - Swiper vertical feed with virtual slides
    - TikTok official embed keeps official audio controls; no custom center play button
@@ -8,18 +8,14 @@
 (function () {
   'use strict';
 
-  if (window.__peipeVideoDiscoverV14 && typeof window.__peipeVideoDiscoverV14Init === 'function') {
-    setTimeout(window.__peipeVideoDiscoverV14Init, 0);
-    return;
-  }
-  window.__peipeVideoDiscoverV14 = true;
+  if (window.__peipeVideoDiscoverV7) return;
+  window.__peipeVideoDiscoverV7 = true;
 
   var CONFIG = Object.assign({
     cid: 6,
     pageSize: 12,
-    preloadAhead: 1,
+    preloadAhead: 8,
     preloadVideoAhead: 1,
-    virtualTotal: 3,
     imageMax: 4,
     coverCacheMs: 7 * 24 * 60 * 60 * 1000,
     translateCacheMs: 3 * 24 * 60 * 60 * 1000,
@@ -110,7 +106,6 @@
     viewer: { images: [], index: 0, swiper: null, startX: 0, startY: 0, down: false },
     imageSwipers: new Map(),
     soundUnlocked: false,
-    soundOn: false,
     comments: { item: null, posts: [], loading: false, replyTo: null, dragY: 0, dragStartY: 0, dragging: false, dragCandidate: false, dragStartTopZone: false, voiceBlob: null, voiceUrl: '', voiceDuration: 0, mediaRecorder: null, stream: null, chunks: [], startAt: 0, timer: 0 },
     translateLongPressTimer: 0
   };
@@ -300,8 +295,8 @@
       passiveListeners: false,
       virtual: {
         enabled: true,
-        addSlidesBefore: 1,
-        addSlidesAfter: Math.max(2, Number(CONFIG.virtualTotal || 3)),
+        addSlidesBefore: 2,
+        addSlidesAfter: Math.max(10, CONFIG.preloadAhead + 4),
         slides: state.list.map(renderSlideHtml)
       },
       on: {
@@ -344,7 +339,6 @@
     $$('.pv-slide-item', state.root).forEach(function (slide) {
       var index = Number(slide.dataset.index || -1);
       slide.classList.toggle('is-active', index === state.index);
-      prepareSlide(index, false);
     });
     initImageSwipers();
     preloadNextVideos(state.index);
@@ -378,7 +372,7 @@
         '<div class="pv-media">' + mediaHtml + '</div>' +
         (hasVideo ? '<div class="pv-cover"><img alt="cover"></div>' : '') +
         '<div class="pv-gradient"></div>' +
-        (hasVideo ? '<div class="pv-tap-zone" data-index="' + index + '"></div><button type="button" class="pv-sound-toggle" data-index="' + index + '" aria-label="声音" title="声音"><span class="pv-sound-icon">🔇</span></button>' : '') +
+        (hasVideo ? '<div class="pv-tap-zone" data-index="' + index + '"></div>' : '') +
         '<div class="pv-toolbar">' +
           '<div class="pv-avatar-wrap"><a href="' + authorHref(author) + '">' + avatarHtml + '</a>' +
           (author.uid && !isOwnAuthor(author) ? '<button type="button" class="pv-follow-plus ' + (following ? 'is-following' : '') + '" data-index="' + index + '">' + (following ? '✓' : '+') + '</button>' : '') + '</div>' +
@@ -454,14 +448,13 @@
   function buildPlayerUrl(videoId, autoplay) {
     var params = new URLSearchParams({
       autoplay: autoplay ? '1' : '0',
-      // Do not force unMute from the parent page. Keep official TikTok volume control available.
       muted: '0',
       loop: '1',
       rel: '0',
-      controls: '0',
-      progress_bar: '0',
-      play_button: '0',
-      volume_control: '0',
+      controls: '1',
+      progress_bar: '1',
+      play_button: '1',
+      volume_control: '1',
       fullscreen_button: '0',
       timestamp: '0',
       music_info: '0',
@@ -488,7 +481,6 @@
     iframe.className = 'pv-tiktok-frame';
     iframe.src = buildPlayerUrl(tk.videoId, !!autoplay);
     iframe.allow = 'autoplay; fullscreen; encrypted-media; picture-in-picture';
-    iframe.sandbox = 'allow-scripts allow-same-origin allow-presentation';
     iframe.loading = 'eager';
     iframe.fetchPriority = index === state.index ? 'high' : 'low';
     iframe.referrerPolicy = 'strict-origin-when-cross-origin';
@@ -514,9 +506,8 @@
   }
   function preloadNextVideos(fromIndex) {
     var found = 0;
-    var ahead = 1;
-    var maxScan = Math.min(state.list.length - 1, fromIndex + Math.max(1, Number(CONFIG.preloadAhead || 1)));
-    for (var i = Math.max(0, fromIndex + 1); i <= maxScan && found < ahead; i += 1) {
+    var maxScan = Math.min(state.list.length - 1, fromIndex + Math.max(12, CONFIG.preloadAhead + 8));
+    for (var i = Math.max(0, fromIndex); i <= maxScan && found < (CONFIG.preloadVideoAhead || 1); i += 1) {
       var it = state.list[i];
       if (it && it.tiktoks && it.tiktoks[0]) {
         prepareSlide(i, false);
@@ -532,9 +523,6 @@
       if (idx !== state.index) pauseSlide(idx);
     });
     preloadNextVideos(state.index);
-    state.soundOn = false;
-    updateSoundButton(state.index, false);
-    playSlide(state.index, false);
     prunePlayers();
   }
   function sendToPlayer(iframe, type, value) {
@@ -543,44 +531,36 @@
     if (arguments.length >= 3) msg.value = value;
     iframe.contentWindow.postMessage(msg, 'https://www.tiktok.com');
   }
-  function destroyPlayer(player) {
-    if (!player) return;
-    try { if (player.iframe) sendToPlayer(player.iframe, 'pause'); } catch (e) {}
-    try { if (player.iframe) player.iframe.src = 'about:blank'; } catch (e2) {}
-    try { if (player.iframe && player.iframe.parentNode) player.iframe.remove(); } catch (e3) {}
-    player.ready = false;
-    player.status = 'paused';
-    player.wantPlay = false;
-    player.iframe = null;
-    if (player.key) state.players.delete(player.key);
-  }
   function hardStopPlayer(player) {
     if (!player || !player.iframe) return;
     sendToPlayer(player.iframe, 'pause');
-    setTimeout(function () { if (player && player.iframe) sendToPlayer(player.iframe, 'pause'); }, 60);
+    setTimeout(function () { sendToPlayer(player.iframe, 'pause'); }, 60);
     setTimeout(function () {
-      if (!player || player.index === state.index) return;
-      destroyPlayer(player);
-    }, 160);
+      if (!player || !player.iframe || player.index === state.index) return;
+      try { player.iframe.src = 'about:blank'; } catch (e) {}
+      player.ready = false;
+      player.status = 'paused';
+      player.wantPlay = false;
+    }, 180);
   }
   function playSlide(index, userGesture) {
     var item = state.list[index];
     if (!item || !(item.tiktoks && item.tiktoks[0])) { preloadNextVideos(index); return; }
-    var player = ensureTikTokPlayer(index, true);
+    var player = ensureTikTokPlayer(index, !!userGesture);
     if (!player || !player.iframe) return;
     player.wantPlay = true;
-    if (player.iframe && !/autoplay=1/.test(player.iframe.src)) {
+    if (userGesture && player.iframe && !/autoplay=1/.test(player.iframe.src)) {
       player.iframe.src = buildPlayerUrl(player.videoId, true);
     }
     pauseOtherPlayers(player.key);
     var slide = findSlide(index);
     if (slide) slide.classList.add('is-loading');
-    state.hasInteracted = !!(state.hasInteracted || userGesture);
-    // Keep sound off by default. User can enable sound with our overlay button, avoiding TikTok iframe click-through jumps.
-    if (state.soundOn) sendToPlayer(player.iframe, 'unMute'); else sendToPlayer(player.iframe, 'mute');
+    if (userGesture) { state.hasInteracted = true; state.soundUnlocked = false; try { localStorage.removeItem('pv-sound-unlocked'); } catch (e) {} }
+    sendToPlayer(player.iframe, 'unMute');
     sendToPlayer(player.iframe, 'play');
-    setTimeout(function () { if (player.iframe) { if (state.soundOn) sendToPlayer(player.iframe, 'unMute'); else sendToPlayer(player.iframe, 'mute'); sendToPlayer(player.iframe, 'play'); } }, 120);
-    setTimeout(function () { if (player.iframe) sendToPlayer(player.iframe, 'play'); }, 480);
+    setTimeout(function () { sendToPlayer(player.iframe, 'play'); sendToPlayer(player.iframe, 'unMute'); }, 80);
+    setTimeout(function () { sendToPlayer(player.iframe, 'unMute'); sendToPlayer(player.iframe, 'play'); }, 260);
+    setTimeout(function () { sendToPlayer(player.iframe, 'unMute'); sendToPlayer(player.iframe, 'play'); }, 720);
     setTimeout(function () { if (player.wantPlay && player.status !== 'playing') markSlidePlaying(index); }, 1800);
   }
   function pauseSlide(index) {
@@ -607,36 +587,13 @@
     });
   }
   function prunePlayers() {
-    var keep = CONFIG.preloadAhead + 2;
+    var keep = Math.max(1, CONFIG.preloadVideoAhead || 1);
     state.players.forEach(function (p, key) {
       if (Math.abs(p.index - state.index) <= keep) return;
-      destroyPlayer(p);
+      try { if (p.iframe) { sendToPlayer(p.iframe, 'pause'); p.iframe.src = 'about:blank'; p.iframe.remove(); } } catch (e) {}
+      state.players.delete(key);
     });
   }
-  function updateSoundButton(index, on) {
-    var slide = findSlide(index);
-    if (!slide) return;
-    var btn = $('.pv-sound-toggle', slide);
-    if (!btn) return;
-    btn.classList.toggle('is-on', !!on);
-    var icon = $('.pv-sound-icon', btn);
-    if (icon) icon.textContent = on ? '🔊' : '🔇';
-    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-  }
-  function toggleCurrentSound(index) {
-    index = Number(index);
-    if (!Number.isFinite(index)) index = state.index;
-    state.index = state.swiper ? state.swiper.activeIndex : state.index;
-    var player = Array.from(state.players.values()).find(function (p) { return p.index === index; }) || ensureTikTokPlayer(index, true);
-    if (!player || !player.iframe) return;
-    state.soundOn = !state.soundOn;
-    state.hasInteracted = true;
-    sendToPlayer(player.iframe, state.soundOn ? 'unMute' : 'mute');
-    sendToPlayer(player.iframe, 'play');
-    updateSoundButton(index, state.soundOn);
-    setTimeout(function () { if (player.iframe) sendToPlayer(player.iframe, state.soundOn ? 'unMute' : 'mute'); }, 120);
-  }
-
   function markSlidePlaying(index) {
     var slide = findSlide(index);
     if (!slide) return;
@@ -656,7 +613,7 @@
       if (!player.iframe || player.iframe.contentWindow !== event.source) return;
       if (data.type === 'onPlayerReady') {
         player.ready = true;
-        if (player.wantPlay) { sendToPlayer(player.iframe, 'mute'); sendToPlayer(player.iframe, 'play'); }
+        if (player.wantPlay) { sendToPlayer(player.iframe, 'unMute'); sendToPlayer(player.iframe, 'play'); }
         return;
       }
       if (data.type === 'onStateChange') {
@@ -1070,8 +1027,10 @@
     ['pointerup','pointercancel','pointerleave'].forEach(function (n) { el.addEventListener(n, function () { clearTimeout(timer); timer = 0; }); });
   }
 
-  function markUserInteracted() {
+  function unlockSoundFromGesture() {
     state.hasInteracted = true;
+    state.soundUnlocked = false;
+    try { localStorage.removeItem('pv-sound-unlocked'); } catch (e) {}
   }
 
   function bindChrome() {
@@ -1106,7 +1065,6 @@
   }
   function onRootClick(e) {
     var btn;
-    if ((btn = e.target.closest('.pv-sound-toggle'))) { e.preventDefault(); e.stopPropagation(); toggleCurrentSound(Number(btn.dataset.index)); return; }
     if ((btn = e.target.closest('.pv-like'))) { e.preventDefault(); e.stopPropagation(); var i = Number(btn.dataset.index); toggleLike(state.list[i], findSlide(i), true); return; }
     if ((btn = e.target.closest('.pv-comment-btn'))) { e.preventDefault(); e.stopPropagation(); openComments(state.list[Number(btn.dataset.index)]); return; }
     if ((btn = e.target.closest('.pv-follow-plus'))) { e.preventDefault(); e.stopPropagation(); var idx = Number(btn.dataset.index); toggleFollow(state.list[idx], findSlide(idx)); return; }
@@ -1118,9 +1076,6 @@
     if ((btn = e.target.closest('.pv-text-row'))) { if (!e.target.closest('.pv-translate-btn')) btn.classList.toggle('is-expanded'); }
   }
   function onRootPointerDown(e) {
-    if (!e.target.closest('input, textarea, select, .pv-comments-panel, .pv-compose-panel, .pv-translate-panel, .pv-viewer')) {
-      markUserInteracted();
-    }
     var textRow = e.target.closest('.pv-text-row');
     var translateBtn = e.target.closest('.pv-translate-btn, .pv-comment-translate');
     if (textRow || translateBtn) { clearTimeout(state.translateLongPressTimer); state.translateLongPressTimer = setTimeout(function () { openTranslateSettings(); }, 650); }
@@ -1161,66 +1116,10 @@
 
   function showEmpty(text) { var old = $('.pv-empty-page', state.root); if (old) old.remove(); var div = document.createElement('div'); div.className = 'pv-empty-page'; div.textContent = text || TEXT.empty; state.root.appendChild(div); }
 
-  function applyInlineShellFallback(root) {
-    if (!root) return;
-    root.style.position = 'fixed';
-    root.style.inset = '0';
-    root.style.zIndex = '1500';
-    root.style.width = '100vw';
-    root.style.height = '100dvh';
-    root.style.background = '#000';
-    root.style.color = '#fff';
-    root.style.overflow = 'hidden';
-  }
-  function resetRuntime(root) {
-    try { if (state.swiper && state.swiper.destroy) state.swiper.destroy(true, true); } catch (e) {}
-    state.players.forEach(function (p) { destroyPlayer(p); });
-    state.imageSwipers.forEach(function (sw) { try { if (sw && sw.destroy) sw.destroy(true, true); } catch (e2) {} });
-    state.root = root;
-    state.swiper = null;
-    state.list = [];
-    state.feedPage = 1;
-    state.feedLoading = false;
-    state.feedDone = false;
-    state.index = 0;
-    state.players.clear();
-    state.imageSwipers.clear();
-    state.imageIndex.clear();
-    state.hasInteracted = false;
-    state.soundUnlocked = false;
-    state.soundOn = false;
-    state.lastTap = { time: 0, x: 0, y: 0, timer: 0 };
-  }
   function init() {
-    var root = document.getElementById('peipe-video-app');
-    if (!root) { document.body.classList.remove('pv-video-mode'); return; }
-    try {
-      if (root.parentNode) {
-        var cleanRoot = root.cloneNode(false);
-        root.parentNode.replaceChild(cleanRoot, root);
-        root = cleanRoot;
-      }
-      resetRuntime(root);
-      try { localStorage.removeItem('pv-sound-unlocked'); } catch (e0) {}
-      document.body.classList.add('pv-video-mode');
-      applyInlineShellFallback(root);
-      addPreconnects();
-      buildChrome();
-      showComposeFabInitial();
-      ensureSwiper().then(function () { return loadFeed(true); }).catch(function (err) {
-        console.error('[peipe-video] init/load failed', err);
-        showEmpty((err && err.message) || TEXT.empty);
-      });
-    } catch (err2) {
-      console.error('[peipe-video] fatal init failed', err2);
-      applyInlineShellFallback(root);
-      root.innerHTML = '<div class="pv-empty-page">视频页初始化失败，请清缓存后重试：' + escapeHtml(err2 && err2.message || String(err2)) + '</div>';
-    }
+    state.root = document.getElementById('peipe-video-app'); if (!state.root) return;
+    document.body.classList.add('pv-video-mode'); addPreconnects(); buildChrome(); showComposeFabInitial();
+    ensureSwiper().then(function () { return loadFeed(true); });
   }
-  window.__peipeVideoDiscoverV14Init = init;
-  if (window.jQuery) {
-    window.jQuery(window).off('action:ajaxify.end.peipeVideoDiscoverV14').on('action:ajaxify.end.peipeVideoDiscoverV14', function () { setTimeout(init, 0); });
-  }
-  window.addEventListener('pageshow', function () { setTimeout(init, 0); });
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 })();
