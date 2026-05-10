@@ -1826,3 +1826,16 @@ body.pv-video-mode [component="sidebar"] {
   color: rgba(17,24,39,.48) !important;
 }
 
+
+
+/* Peipe video v11 fixes: current TikTok iframe is muted autoplay; no custom sound/play prompt. */
+.pv-slide-item.pv-show-official-controls .pv-cover {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+.pv-slide-item.pv-show-official-controls .pv-media {
+  z-index: 16 !important;
+}
+.pv-slide-item.pv-show-official-controls .pv-tiktok-frame {
+  pointer-events: auto !important;
+}
