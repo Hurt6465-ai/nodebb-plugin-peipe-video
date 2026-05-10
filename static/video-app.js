@@ -1,15 +1,16 @@
-/* Peipe /video mobile discover page v9
+/* Peipe /video mobile discover page v10
    - Independent /video page, official NodeBB plugin backend feed only
    - Swiper vertical feed with virtual slides
    - TikTok official embed keeps official audio controls
-   - v9 audio fix: first video starts muted, sound opens only after explicit tap, one-video preload
+   - v10 manual-play audio fix: no autoplay sound, tap once per video to play with sound, hard stop previous iframe
    - Image posts use horizontal carousel; video posts use vertical feed
    - Comment drawer, replies, translate for text/comments/input
 */
 (function () {
   'use strict';
 
-  if (window.__peipeVideoDiscoverV9) return;
+  if (window.__peipeVideoDiscoverV10) return;
+  window.__peipeVideoDiscoverV10 = true;
   window.__peipeVideoDiscoverV9 = true;
   window.__peipeVideoDiscoverV7 = true;
 
@@ -20,7 +21,7 @@
     preloadAhead: 1,
     preloadVideoAhead: 1,
     // Keep only the current and the next/previous nearby TikTok iframes alive.
-    audioKeepAround: 2,
+    audioKeepAround: 1,
     audioRetryDelays: [60, 220, 650, 1200],
     imageMax: 4,
     coverCacheMs: 7 * 24 * 60 * 60 * 1000,
@@ -78,9 +79,9 @@
     aiPrompt: '提示词',
     voicePreview: '语音评论',
     recording: '录音中',
-    soundHint: '点一下开启声音',
-    soundRetry: '再次点一下开启声音',
-    soundBlocked: '浏览器拦截了自动声音，请点一下'
+    soundHint: '点一下播放',
+    soundRetry: '再点一下播放',
+    soundBlocked: '浏览器需要你点一下播放'
   };
 
   var RE = {
@@ -514,11 +515,12 @@
     if (index < 0 || index >= state.list.length) return;
     var item = state.list[index];
     if (!item || !(item.tiktoks && item.tiktoks[0])) return;
-    var player = ensureTikTokPlayer(index, !!autoplay || (state.soundUnlocked && index === state.index));
-    if (player && autoplay) {
-      // Do not reload an existing TikTok iframe just to flip autoplay=1; reloading resets
-      // TikTok's internal volume state and is the main reason every video asks for sound again.
-      player.wantPlay = index === state.index;
+    // v10 manual mode: preloading may create the iframe, but never starts playback.
+    // Playback and sound are only requested from a direct user click on the current slide.
+    var player = ensureTikTokPlayer(index, false);
+    if (player) {
+      player.wantPlay = false;
+      player.wantSound = false;
     }
   }
   function preloadNextVideos(fromIndex) {
@@ -542,10 +544,10 @@
       slide.classList.toggle('is-active', idx === state.index);
       if (idx !== state.index) pauseSlide(idx);
     });
+    pauseOtherPlayers('');
+    prepareSlide(state.index, false);
     preloadNextVideos(state.index);
-    // Only real pointer/click handlers pass userGesture=true. A saved preference can request
-    // sound, but it must not be mistaken for a fresh browser user activation.
-    playSlide(state.index, false);
+    showManualPlayHint(state.index);
     prunePlayers();
   }
   function sendToPlayer(iframe, type, value) {
@@ -583,6 +585,13 @@
     hint.classList.add('is-show');
     if (index === state.index) state.soundHintVisible = true;
   }
+  function showManualPlayHint(index) {
+    var item = state.list[index];
+    if (!item || !(item.tiktoks && item.tiktoks[0])) return;
+    var player = getPlayerByIndex(index);
+    if (player && player.wantPlay && player.status === 'playing') return;
+    showSoundHint(index, TEXT.soundHint);
+  }
   function confirmPlayerSound(player) {
     if (!player) return;
     player.muted = false;
@@ -613,55 +622,55 @@
     } catch (e) {}
     if (key) state.players.delete(key);
   }
-  function hardStopPlayer(player) {
+  function hardStopPlayer(player, key) {
     if (!player || !player.iframe) return;
-    // Soft pause only. Do not blank/reload nearby TikTok iframes; reloading resets the
-    // player's internal mute/volume state and forces users to open sound again per video.
+    // v10 manual mode: stop leakage first. TikTok sometimes ignores a parent-page pause
+    // message, so leaving the slide destroys that iframe after a short pause burst.
     player.wantPlay = false;
+    player.wantSound = false;
     player.status = 'paused';
     sendToPlayer(player.iframe, 'pause');
-    setTimeout(function () { sendToPlayer(player.iframe, 'pause'); }, 80);
+    setTimeout(function () { sendToPlayer(player.iframe, 'pause'); }, 40);
+    setTimeout(function () { destroyPlayer(player, key || player.key); }, 120);
   }
   function playSlide(index, userGesture) {
     var item = state.list[index];
     if (!item || !(item.tiktoks && item.tiktoks[0])) { preloadNextVideos(index); return; }
-    var player = ensureTikTokPlayer(index, !!userGesture || state.soundUnlocked);
+    if (!userGesture) {
+      prepareSlide(index, false);
+      showManualPlayHint(index);
+      return;
+    }
+    var player = ensureTikTokPlayer(index, false);
     if (!player || !player.iframe) return;
     player.wantPlay = true;
-    player.wantSound = !!(userGesture || state.soundUnlocked);
-    if (userGesture) rememberSoundWanted(false);
+    player.wantSound = true;
+    rememberSoundWanted(false);
     pauseOtherPlayers(player.key);
+    hideSoundHint(index);
     var slide = findSlide(index);
     if (slide) slide.classList.add('is-loading');
 
-    if (player.wantSound) {
-      hideSoundHint(index);
-      requestPlayerSound(player, true);
-    } else {
-      // Default path: keep the first/current video muted, then play.
-      sendToPlayer(player.iframe, 'mute');
-      sendToPlayer(player.iframe, 'play');
-      showSoundHint(index, TEXT.soundHint);
-    }
+    // The click on our own overlay is the only reliable moment to request audible playback.
+    requestPlayerSound(player, true);
 
-    (CONFIG.audioRetryDelays || [80, 260, 720]).forEach(function (delay) {
+    (CONFIG.audioRetryDelays || [60, 220, 650, 1200]).forEach(function (delay) {
       setTimeout(function () {
         if (!player.wantPlay || player.index !== state.index) return;
-        if (player.wantSound) requestPlayerSound(player, true);
-        else { sendToPlayer(player.iframe, 'mute'); sendToPlayer(player.iframe, 'play'); }
+        requestPlayerSound(player, true);
       }, delay);
     });
 
     setTimeout(function () {
       if (!player.wantPlay || player.index !== state.index) return;
       if (player.status !== 'playing') markSlidePlaying(index);
-      if (player.wantSound && !player.soundConfirmed && player.muted !== false) markSoundBlocked(player, TEXT.soundRetry);
+      if (!player.soundConfirmed && player.muted !== false) markSoundBlocked(player, TEXT.soundRetry);
     }, 1800);
   }
   function pauseSlide(index) {
-    state.players.forEach(function (p) {
+    state.players.forEach(function (p, key) {
       if (p.index !== index) return;
-      hardStopPlayer(p);
+      hardStopPlayer(p, key);
     });
     var slide = findSlide(index);
     if (slide) slide.classList.remove('is-playing', 'is-loading');
@@ -669,21 +678,21 @@
   function pauseOtherPlayers(currentKey) {
     state.players.forEach(function (p, key) {
       if (key === currentKey) return;
-      var farAway = Math.abs(p.index - state.index) > Math.max(1, CONFIG.audioKeepAround || 2);
-      p.wantPlay = false; p.status = 'paused';
+      var wasPlaying = p.wantPlay || p.status === 'playing';
+      var shouldKeepPreloadedNext = p.index === state.index + 1 && !wasPlaying;
+      p.wantPlay = false; p.wantSound = false; p.status = 'paused';
       if (p.iframe) {
         sendToPlayer(p.iframe, 'pause');
-        setTimeout(function(){ sendToPlayer(p.iframe, 'pause'); }, 80);
-        if (farAway) destroyPlayer(p, key);
+        setTimeout(function(){ sendToPlayer(p.iframe, 'pause'); }, 40);
+        if (!shouldKeepPreloadedNext) destroyPlayer(p, key);
       }
       var slide = findSlide(p.index);
       if (slide) slide.classList.remove('is-playing', 'is-loading');
     });
   }
   function prunePlayers() {
-    var keep = Math.max(1, CONFIG.audioKeepAround || 2);
     state.players.forEach(function (p, key) {
-      if (Math.abs(p.index - state.index) <= keep) return;
+      if (p.index === state.index || p.index === state.index + 1) return;
       destroyPlayer(p, key);
     });
   }
@@ -706,10 +715,7 @@
       if (!player.iframe || player.iframe.contentWindow !== event.source) return;
       if (data.type === 'onPlayerReady') {
         player.ready = true;
-        if (player.wantPlay) {
-          if (player.wantSound || state.soundUnlocked) requestPlayerSound(player, true);
-          else { sendToPlayer(player.iframe, 'mute'); sendToPlayer(player.iframe, 'play'); }
-        }
+        if (player.wantPlay && player.wantSound) requestPlayerSound(player, true);
         return;
       }
       if (data.type === 'onStateChange') {
@@ -765,7 +771,7 @@
       if (!(item.tiktoks && item.tiktoks[0])) return;
       var player = Array.from(state.players.values()).find(function (p) { return p.index === index; });
       if (player && player.status === 'playing') pauseSlide(index);
-      else { state.hasInteracted = true; playSlide(index, !!state.soundUnlocked); }
+      else { state.hasInteracted = true; playSlide(index, true); }
     }, CONFIG.doubleTapMs + 20);
   }
   function showHeart(x, y) {
