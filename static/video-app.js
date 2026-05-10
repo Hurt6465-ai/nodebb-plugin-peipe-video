@@ -1,4 +1,4 @@
-/* Peipe /video mobile discover page v7
+/* Peipe /video mobile discover page v12
    - Independent /video page, official NodeBB plugin backend feed only
    - Swiper vertical feed with virtual slides
    - TikTok official embed keeps official audio controls; no custom center play button
@@ -8,14 +8,17 @@
 (function () {
   'use strict';
 
-  if (window.__peipeVideoDiscoverV7) return;
-  window.__peipeVideoDiscoverV7 = true;
+  if (window.__peipeVideoDiscoverV12 && typeof window.__peipeVideoDiscoverV12Init === 'function') {
+    window.__peipeVideoDiscoverV12Init();
+    return;
+  }
+  window.__peipeVideoDiscoverV12 = true;
 
   var CONFIG = Object.assign({
     cid: 6,
     pageSize: 12,
-    preloadAhead: 1,
-    preloadVideoAhead: 1,
+    preloadAhead: 8,
+    preloadVideoAhead: 3,
     imageMax: 4,
     coverCacheMs: 7 * 24 * 60 * 60 * 1000,
     translateCacheMs: 3 * 24 * 60 * 60 * 1000,
@@ -23,6 +26,12 @@
     swiperCdnJs: '/plugins/nodebb-plugin-peipe-video/static/lib/swiper-bundle.min.js',
     swiperCdnCss: '/plugins/nodebb-plugin-peipe-video/static/lib/swiper-bundle.min.css'
   }, window.PEIPE_VIDEO_CONFIG || {});
+
+  // v12: keep TikTok iframe count low on mobile. Template values are capped here
+  // so older tpl config cannot accidentally preload many videos again.
+  CONFIG.preloadAhead = Math.min(1, Math.max(0, Number(CONFIG.preloadAhead) || 1));
+  CONFIG.preloadVideoAhead = Math.min(1, Math.max(0, Number(CONFIG.preloadVideoAhead) || 1));
+  CONFIG.virtualTotal = Math.min(3, Math.max(1, Number(CONFIG.virtualTotal) || 3));
 
   var TEXT = {
     loading: '发现加载中...',
@@ -295,8 +304,8 @@
       passiveListeners: false,
       virtual: {
         enabled: true,
-        addSlidesBefore: 1,
-        addSlidesAfter: Math.max(1, Number(CONFIG.preloadAhead || 1)),
+        addSlidesBefore: 2,
+        addSlidesAfter: Math.max(10, CONFIG.preloadAhead + 4),
         slides: state.list.map(renderSlideHtml)
       },
       on: {
@@ -339,7 +348,9 @@
     $$('.pv-slide-item', state.root).forEach(function (slide) {
       var index = Number(slide.dataset.index || -1);
       slide.classList.toggle('is-active', index === state.index);
-      if (Math.abs(index - state.index) <= Math.max(1, Number(CONFIG.preloadAhead || 1))) {
+      // Only create TikTok iframes for the active slide and one next video.
+      // This avoids the white-screen/jank caused by building many cross-origin players.
+      if (index === state.index || index === state.index + 1) {
         prepareSlide(index, index === state.index);
       }
     });
@@ -451,6 +462,8 @@
   function buildPlayerUrl(videoId, autoplay) {
     var params = new URLSearchParams({
       autoplay: autoplay ? '1' : '0',
+      // Keep volume controls available; do not force unMute from the parent page.
+      // The video autoplays silently when the browser/TikTok chooses, and users open sound via TikTok's official button.
       muted: '1',
       loop: '1',
       rel: '0',
@@ -503,18 +516,17 @@
     var item = state.list[index];
     if (!item || !(item.tiktoks && item.tiktoks[0])) return;
     var player = ensureTikTokPlayer(index, !!autoplay);
-    if (player && autoplay && player.iframe && !/autoplay=1/.test(player.iframe.src)) {
+    if (player && autoplay && player.iframe && !/[?&]autoplay=1/.test(player.iframe.src)) {
       player.iframe.src = buildPlayerUrl(player.videoId, true);
     }
   }
   function preloadNextVideos(fromIndex) {
     var found = 0;
-    var limit = Math.max(1, Number(CONFIG.preloadVideoAhead || 1));
-    var maxScan = Math.min(state.list.length - 1, fromIndex + Math.max(1, Number(CONFIG.preloadAhead || 1)));
-    for (var i = Math.max(0, fromIndex); i <= maxScan && found < limit; i += 1) {
+    var maxScan = Math.min(state.list.length - 1, fromIndex + 4);
+    for (var i = Math.max(0, fromIndex + 1); i <= maxScan && found < (CONFIG.preloadVideoAhead || 1); i += 1) {
       var it = state.list[i];
       if (it && it.tiktoks && it.tiktoks[0]) {
-        prepareSlide(i, i === state.index);
+        prepareSlide(i, false);
         found += 1;
       }
     }
@@ -526,6 +538,7 @@
       slide.classList.toggle('is-active', idx === state.index);
       if (idx !== state.index) pauseSlide(idx);
     });
+    prepareSlide(state.index, true);
     preloadNextVideos(state.index);
     playSlide(state.index, false);
     prunePlayers();
@@ -536,17 +549,25 @@
     if (arguments.length >= 3) msg.value = value;
     iframe.contentWindow.postMessage(msg, 'https://www.tiktok.com');
   }
+  function destroyPlayer(player) {
+    if (!player || !player.iframe) return;
+    try { sendToPlayer(player.iframe, 'pause'); } catch (e) {}
+    try { player.iframe.src = 'about:blank'; } catch (e2) {}
+    try { player.iframe.remove(); } catch (e3) {}
+    player.ready = false;
+    player.status = 'paused';
+    player.wantPlay = false;
+    state.players.delete(player.key);
+  }
   function hardStopPlayer(player) {
     if (!player || !player.iframe) return;
     sendToPlayer(player.iframe, 'pause');
-    setTimeout(function () { sendToPlayer(player.iframe, 'pause'); }, 60);
+    setTimeout(function () { sendToPlayer(player.iframe, 'pause'); }, 40);
     setTimeout(function () {
-      if (!player || !player.iframe || player.index === state.index) return;
-      try { player.iframe.src = 'about:blank'; } catch (e) {}
-      player.ready = false;
-      player.status = 'paused';
-      player.wantPlay = false;
-    }, 180);
+      var active = state.swiper ? state.swiper.activeIndex : state.index;
+      if (!player || !player.iframe || player.index === active) return;
+      destroyPlayer(player);
+    }, 80);
   }
   function playSlide(index, userGesture) {
     var item = state.list[index];
@@ -554,14 +575,16 @@
     var player = ensureTikTokPlayer(index, true);
     if (!player || !player.iframe) return;
     player.wantPlay = true;
+    if (player.iframe && !/[?&]autoplay=1/.test(player.iframe.src)) {
+      player.iframe.src = buildPlayerUrl(player.videoId, true);
+    }
     pauseOtherPlayers(player.key);
     var slide = findSlide(index);
     if (slide) slide.classList.add('is-loading');
     if (userGesture) state.hasInteracted = true;
-    // v11: keep autoplay muted. Do not send unMute; users can enable sound only with TikTok's official volume button.
+    // Do not call unMute here. Sound is intentionally controlled only by TikTok's official volume button.
     sendToPlayer(player.iframe, 'play');
-    setTimeout(function () { sendToPlayer(player.iframe, 'play'); }, 80);
-    setTimeout(function () { sendToPlayer(player.iframe, 'play'); }, 260);
+    setTimeout(function () { sendToPlayer(player.iframe, 'play'); }, 120);
     setTimeout(function () { if (player.wantPlay && player.status !== 'playing') markSlidePlaying(index); }, 1800);
   }
   function pauseSlide(index) {
@@ -588,11 +611,9 @@
     });
   }
   function prunePlayers() {
-    var keep = CONFIG.preloadAhead + 2;
     state.players.forEach(function (p, key) {
-      if (Math.abs(p.index - state.index) <= keep) return;
-      try { if (p.iframe) { sendToPlayer(p.iframe, 'pause'); p.iframe.src = 'about:blank'; p.iframe.remove(); } } catch (e) {}
-      state.players.delete(key);
+      if (p.index === state.index || p.index === state.index + 1) return;
+      destroyPlayer(p);
     });
   }
   function markSlidePlaying(index) {
@@ -1029,7 +1050,7 @@
   }
 
   function unlockSoundFromGesture() {
-    // v11: do not unlock sound from the parent page. Sound stays off until the user taps TikTok's official volume button.
+    // v12: no parent-page sound unlock. Audio is opened manually through TikTok's official volume button.
     state.hasInteracted = true;
   }
 
@@ -1077,7 +1098,7 @@
   }
   function onRootPointerDown(e) {
     if (!e.target.closest('input, textarea, select, .pv-comments-panel, .pv-compose-panel, .pv-translate-panel, .pv-viewer')) {
-      unlockSoundFromGesture();
+      state.hasInteracted = true;
     }
     var textRow = e.target.closest('.pv-text-row');
     var translateBtn = e.target.closest('.pv-translate-btn, .pv-comment-translate');
@@ -1119,10 +1140,40 @@
 
   function showEmpty(text) { var old = $('.pv-empty-page', state.root); if (old) old.remove(); var div = document.createElement('div'); div.className = 'pv-empty-page'; div.textContent = text || TEXT.empty; state.root.appendChild(div); }
 
+  function resetRuntime(root) {
+    try { if (state.swiper && state.swiper.destroy) state.swiper.destroy(true, true); } catch (e) {}
+    state.players.forEach(function (p) { destroyPlayer(p); });
+    state.imageSwipers.forEach(function (sw) { try { if (sw && sw.destroy) sw.destroy(true, true); } catch (e2) {} });
+    state.root = root;
+    state.swiper = null;
+    state.list = [];
+    state.feedPage = 1;
+    state.feedLoading = false;
+    state.feedDone = false;
+    state.index = 0;
+    state.players.clear();
+    state.imageSwipers.clear();
+    state.imageIndex.clear();
+    state.hasInteracted = false;
+    state.soundUnlocked = false;
+    state.lastTap = { time: 0, x: 0, y: 0, timer: 0 };
+  }
+
   function init() {
-    state.root = document.getElementById('peipe-video-app'); if (!state.root) return;
+    var root = document.getElementById('peipe-video-app');
+    if (!root) { document.body.classList.remove('pv-video-mode'); return; }
+    if (root.dataset && root.dataset.pvBooted === '1' && state.root === root) return;
+    resetRuntime(root);
+    if (root.dataset) root.dataset.pvBooted = '1';
+    try { localStorage.removeItem('pv-sound-unlocked'); } catch (e) {}
     document.body.classList.add('pv-video-mode'); addPreconnects(); buildChrome(); showComposeFabInitial();
     ensureSwiper().then(function () { return loadFeed(true); });
+  }
+  window.__peipeVideoDiscoverV12Init = init;
+  if (window.jQuery) {
+    window.jQuery(window).off('action:ajaxify.end.peipeVideoDiscover').on('action:ajaxify.end.peipeVideoDiscover', function () {
+      setTimeout(init, 0);
+    });
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 })();
