@@ -1882,3 +1882,46 @@ body.pv-video-mode .container-xxl {
   box-shadow: none !important;
   border: 0 !important;
 }
+
+
+/* Peipe video v14: stop TikTok iframe click-through jumps; use our own sound button; preload remains one video. */
+.pv-tiktok-frame {
+  pointer-events: none !important;
+}
+
+.pv-sound-toggle {
+  position: absolute !important;
+  right: 14px !important;
+  top: max(18px, calc(var(--pv-top-safe) + 12px)) !important;
+  z-index: 16 !important;
+  width: 42px !important;
+  height: 42px !important;
+  border: 0 !important;
+  border-radius: 999px !important;
+  background: rgba(0,0,0,.36) !important;
+  color: #fff !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-size: 20px !important;
+  line-height: 1 !important;
+  box-shadow: none !important;
+  backdrop-filter: blur(10px) !important;
+  -webkit-backdrop-filter: blur(10px) !important;
+  touch-action: manipulation !important;
+}
+
+.pv-sound-toggle.is-on {
+  background: rgba(255,36,66,.86) !important;
+}
+
+.pv-sound-toggle .pv-sound-icon {
+  display: block !important;
+  transform: translateY(-1px) !important;
+}
+
+/* Keep the tap layer below the sound button and away from right-side actions. */
+.pv-tap-zone {
+  right: 104px !important;
+  bottom: max(226px, calc(var(--pv-bottom-safe) + 218px)) !important;
+}
