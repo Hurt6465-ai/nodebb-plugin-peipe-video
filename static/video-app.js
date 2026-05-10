@@ -1,7 +1,8 @@
 /* Peipe /video mobile discover page v8
    - Independent /video page, official NodeBB plugin backend feed only
    - Swiper vertical feed with virtual slides
-   - TikTok official embed keeps official audio controls; no custom center play button
+   - TikTok official embed keeps official audio controls
+   - v8 audio fix: one-tap sound intent, soft-pause iframes, reliable TikTok mute/error handling
    - Image posts use horizontal carousel; video posts use vertical feed
    - Comment drawer, replies, translate for text/comments/input
 */
@@ -15,7 +16,10 @@
     cid: 6,
     pageSize: 12,
     preloadAhead: 8,
-    preloadVideoAhead: 1,
+    preloadVideoAhead: 3,
+    // Keep nearby TikTok iframes alive so their internal volume state is not reset on every swipe.
+    audioKeepAround: 14,
+    audioRetryDelays: [60, 220, 650, 1200],
     imageMax: 4,
     coverCacheMs: 7 * 24 * 60 * 60 * 1000,
     translateCacheMs: 3 * 24 * 60 * 60 * 1000,
@@ -71,7 +75,10 @@
     aiApiKey: '密钥',
     aiPrompt: '提示词',
     voicePreview: '语音评论',
-    recording: '录音中'
+    recording: '录音中',
+    soundHint: '点一下开启声音',
+    soundRetry: '再次点一下开启声音',
+    soundBlocked: '浏览器拦截了自动声音，请点一下'
   };
 
   var RE = {
@@ -105,7 +112,11 @@
     },
     viewer: { images: [], index: 0, swiper: null, startX: 0, startY: 0, down: false },
     imageSwipers: new Map(),
-    soundUnlocked: false,
+    // soundUnlocked means the user has expressed intent to hear sound. It is not treated as
+    // proof that every new TikTok iframe is already unmuted; TikTok callbacks confirm that.
+    soundUnlocked: !!safeJsonGet('pv-sound-unlocked', false),
+    soundConfirmed: !!safeJsonGet('pv-sound-confirmed', false),
+    soundHintVisible: false,
     comments: { item: null, posts: [], loading: false, replyTo: null, dragY: 0, dragStartY: 0, dragging: false, dragCandidate: false, dragStartTopZone: false, voiceBlob: null, voiceUrl: '', voiceDuration: 0, mediaRecorder: null, stream: null, chunks: [], startAt: 0, timer: 0 },
     translateLongPressTimer: 0
   };
@@ -339,6 +350,7 @@
     $$('.pv-slide-item', state.root).forEach(function (slide) {
       var index = Number(slide.dataset.index || -1);
       slide.classList.toggle('is-active', index === state.index);
+      prepareSlide(index, false);
     });
     initImageSwipers();
     preloadNextVideos(state.index);
@@ -372,7 +384,7 @@
         '<div class="pv-media">' + mediaHtml + '</div>' +
         (hasVideo ? '<div class="pv-cover"><img alt="cover"></div>' : '') +
         '<div class="pv-gradient"></div>' +
-        (hasVideo ? '<div class="pv-tap-zone" data-index="' + index + '"></div>' : '') +
+        (hasVideo ? '<div class="pv-tap-zone" data-index="' + index + '"></div><button type="button" class="pv-sound-hint" data-index="' + index + '"><span aria-hidden="true">🔊</span><b>' + TEXT.soundHint + '</b></button>' : '') +
         '<div class="pv-toolbar">' +
           '<div class="pv-avatar-wrap"><a href="' + authorHref(author) + '">' + avatarHtml + '</a>' +
           (author.uid && !isOwnAuthor(author) ? '<button type="button" class="pv-follow-plus ' + (following ? 'is-following' : '') + '" data-index="' + index + '">' + (following ? '✓' : '+') + '</button>' : '') + '</div>' +
@@ -486,7 +498,7 @@
     iframe.referrerPolicy = 'strict-origin-when-cross-origin';
     iframe.title = 'TikTok Player';
     shell.appendChild(iframe);
-    player = { key: key, index: index, item: item, videoId: tk.videoId, iframe: iframe, ready: false, wantPlay: false, status: 'paused' };
+    player = { key: key, index: index, item: item, videoId: tk.videoId, iframe: iframe, ready: false, wantPlay: false, wantSound: !!state.soundUnlocked, soundConfirmed: !!state.soundConfirmed, muted: null, status: 'paused', lastError: '' };
     state.players.set(key, player);
     fetchCover(tk.videoId, tk.url).then(function (url) {
       if (!url) return;
@@ -499,18 +511,20 @@
     if (index < 0 || index >= state.list.length) return;
     var item = state.list[index];
     if (!item || !(item.tiktoks && item.tiktoks[0])) return;
-    var player = ensureTikTokPlayer(index, !!autoplay);
-    if (player && autoplay && player.iframe && !/autoplay=1/.test(player.iframe.src)) {
-      player.iframe.src = buildPlayerUrl(player.videoId, true);
+    var player = ensureTikTokPlayer(index, !!autoplay || (state.soundUnlocked && index === state.index));
+    if (player && autoplay) {
+      // Do not reload an existing TikTok iframe just to flip autoplay=1; reloading resets
+      // TikTok's internal volume state and is the main reason every video asks for sound again.
+      player.wantPlay = index === state.index;
     }
   }
   function preloadNextVideos(fromIndex) {
     var found = 0;
     var maxScan = Math.min(state.list.length - 1, fromIndex + Math.max(12, CONFIG.preloadAhead + 8));
-    for (var i = Math.max(0, fromIndex); i <= maxScan && found < (CONFIG.preloadVideoAhead || 1); i += 1) {
+    for (var i = Math.max(0, fromIndex); i <= maxScan && found < (CONFIG.preloadVideoAhead || 3); i += 1) {
       var it = state.list[i];
       if (it && it.tiktoks && it.tiktoks[0]) {
-        prepareSlide(i, false);
+        prepareSlide(i, i === state.index && (state.hasInteracted || state.soundUnlocked));
         found += 1;
       }
     }
@@ -523,6 +537,9 @@
       if (idx !== state.index) pauseSlide(idx);
     });
     preloadNextVideos(state.index);
+    // Only real pointer/click handlers pass userGesture=true. A saved preference can request
+    // sound, but it must not be mistaken for a fresh browser user activation.
+    playSlide(state.index, false);
     prunePlayers();
   }
   function sendToPlayer(iframe, type, value) {
@@ -531,42 +548,111 @@
     if (arguments.length >= 3) msg.value = value;
     iframe.contentWindow.postMessage(msg, 'https://www.tiktok.com');
   }
+  function rememberSoundWanted(confirmed) {
+    state.hasInteracted = true;
+    state.soundUnlocked = true;
+    if (confirmed) state.soundConfirmed = true;
+    safeJsonSet('pv-sound-unlocked', true);
+    safeJsonSet('pv-sound-confirmed', !!state.soundConfirmed);
+  }
+  function getPlayerByIndex(index) {
+    var found = null;
+    state.players.forEach(function (p) { if (!found && p.index === index) found = p; });
+    return found;
+  }
+  function hideSoundHint(index) {
+    var slide = findSlide(index);
+    if (!slide) return;
+    var hint = $('.pv-sound-hint', slide);
+    if (hint) hint.classList.remove('is-show');
+    if (index === state.index) state.soundHintVisible = false;
+  }
+  function showSoundHint(index, message) {
+    var slide = findSlide(index);
+    if (!slide) return;
+    var hint = $('.pv-sound-hint', slide);
+    if (!hint) return;
+    var label = $('b', hint);
+    if (label) label.textContent = message || TEXT.soundHint;
+    hint.classList.add('is-show');
+    if (index === state.index) state.soundHintVisible = true;
+  }
+  function confirmPlayerSound(player) {
+    if (!player) return;
+    player.muted = false;
+    player.soundConfirmed = true;
+    rememberSoundWanted(true);
+    hideSoundHint(player.index);
+  }
+  function markSoundBlocked(player, message) {
+    if (!player || player.index !== state.index || !player.wantSound) return;
+    player.soundConfirmed = false;
+    player.muted = true;
+    showSoundHint(player.index, message || TEXT.soundBlocked);
+  }
+  function requestPlayerSound(player, withPlay) {
+    if (!player || !player.iframe) return;
+    player.wantSound = true;
+    sendToPlayer(player.iframe, 'unMute');
+    if (withPlay !== false) sendToPlayer(player.iframe, 'play');
+  }
+  function destroyPlayer(player, key) {
+    if (!player) return;
+    try {
+      if (player.iframe) {
+        sendToPlayer(player.iframe, 'pause');
+        player.iframe.src = 'about:blank';
+        player.iframe.remove();
+      }
+    } catch (e) {}
+    if (key) state.players.delete(key);
+  }
   function hardStopPlayer(player) {
     if (!player || !player.iframe) return;
+    // Soft pause only. Do not blank/reload nearby TikTok iframes; reloading resets the
+    // player's internal mute/volume state and forces users to open sound again per video.
+    player.wantPlay = false;
+    player.status = 'paused';
     sendToPlayer(player.iframe, 'pause');
-    setTimeout(function () { sendToPlayer(player.iframe, 'pause'); }, 60);
-    setTimeout(function () {
-      if (!player || !player.iframe || player.index === state.index) return;
-      try { player.iframe.src = 'about:blank'; } catch (e) {}
-      player.ready = false;
-      player.status = 'paused';
-      player.wantPlay = false;
-    }, 180);
+    setTimeout(function () { sendToPlayer(player.iframe, 'pause'); }, 80);
   }
   function playSlide(index, userGesture) {
     var item = state.list[index];
     if (!item || !(item.tiktoks && item.tiktoks[0])) { preloadNextVideos(index); return; }
-    var player = ensureTikTokPlayer(index, !!userGesture);
+    var player = ensureTikTokPlayer(index, !!userGesture || state.soundUnlocked);
     if (!player || !player.iframe) return;
     player.wantPlay = true;
-    if (userGesture && player.iframe && !/autoplay=1/.test(player.iframe.src)) {
-      player.iframe.src = buildPlayerUrl(player.videoId, true);
-    }
+    player.wantSound = !!(userGesture || state.soundUnlocked);
+    if (userGesture) rememberSoundWanted(false);
     pauseOtherPlayers(player.key);
     var slide = findSlide(index);
     if (slide) slide.classList.add('is-loading');
-    if (userGesture) { state.hasInteracted = true; state.soundUnlocked = false; try { localStorage.removeItem('pv-sound-unlocked'); } catch (e) {} }
-    sendToPlayer(player.iframe, 'unMute');
-    sendToPlayer(player.iframe, 'play');
-    setTimeout(function () { sendToPlayer(player.iframe, 'play'); sendToPlayer(player.iframe, 'unMute'); }, 80);
-    setTimeout(function () { sendToPlayer(player.iframe, 'unMute'); sendToPlayer(player.iframe, 'play'); }, 260);
-    setTimeout(function () { sendToPlayer(player.iframe, 'unMute'); sendToPlayer(player.iframe, 'play'); }, 720);
-    setTimeout(function () { if (player.wantPlay && player.status !== 'playing') markSlidePlaying(index); }, 1800);
+
+    if (player.wantSound) {
+      hideSoundHint(index);
+      requestPlayerSound(player, true);
+    } else {
+      sendToPlayer(player.iframe, 'play');
+      showSoundHint(index, TEXT.soundHint);
+    }
+
+    (CONFIG.audioRetryDelays || [80, 260, 720]).forEach(function (delay) {
+      setTimeout(function () {
+        if (!player.wantPlay || player.index !== state.index) return;
+        if (player.wantSound) requestPlayerSound(player, true);
+        else sendToPlayer(player.iframe, 'play');
+      }, delay);
+    });
+
+    setTimeout(function () {
+      if (!player.wantPlay || player.index !== state.index) return;
+      if (player.status !== 'playing') markSlidePlaying(index);
+      if (player.wantSound && !player.soundConfirmed && player.muted !== false) markSoundBlocked(player, TEXT.soundRetry);
+    }, 1800);
   }
   function pauseSlide(index) {
     state.players.forEach(function (p) {
       if (p.index !== index) return;
-      p.wantPlay = false; p.status = 'paused';
       hardStopPlayer(p);
     });
     var slide = findSlide(index);
@@ -575,23 +661,22 @@
   function pauseOtherPlayers(currentKey) {
     state.players.forEach(function (p, key) {
       if (key === currentKey) return;
-      var wasActive = p.wantPlay || p.status === 'playing' || p.index < state.index || Math.abs(p.index - state.index) > CONFIG.preloadAhead;
+      var farAway = Math.abs(p.index - state.index) > Math.max(4, CONFIG.audioKeepAround || 14);
       p.wantPlay = false; p.status = 'paused';
       if (p.iframe) {
         sendToPlayer(p.iframe, 'pause');
         setTimeout(function(){ sendToPlayer(p.iframe, 'pause'); }, 80);
-        if (wasActive) hardStopPlayer(p);
+        if (farAway) destroyPlayer(p, key);
       }
       var slide = findSlide(p.index);
       if (slide) slide.classList.remove('is-playing', 'is-loading');
     });
   }
   function prunePlayers() {
-    var keep = Math.max(1, CONFIG.preloadVideoAhead || 1);
+    var keep = Math.max(CONFIG.preloadAhead + 2, CONFIG.audioKeepAround || 14);
     state.players.forEach(function (p, key) {
       if (Math.abs(p.index - state.index) <= keep) return;
-      try { if (p.iframe) { sendToPlayer(p.iframe, 'pause'); p.iframe.src = 'about:blank'; p.iframe.remove(); } } catch (e) {}
-      state.players.delete(key);
+      destroyPlayer(p, key);
     });
   }
   function markSlidePlaying(index) {
@@ -613,7 +698,10 @@
       if (!player.iframe || player.iframe.contentWindow !== event.source) return;
       if (data.type === 'onPlayerReady') {
         player.ready = true;
-        if (player.wantPlay) { sendToPlayer(player.iframe, 'unMute'); sendToPlayer(player.iframe, 'play'); }
+        if (player.wantPlay) {
+          if (player.wantSound || state.soundUnlocked) requestPlayerSound(player, true);
+          else sendToPlayer(player.iframe, 'play');
+        }
         return;
       }
       if (data.type === 'onStateChange') {
@@ -621,6 +709,25 @@
         if (value === 1 || word === 'playing') { player.status = 'playing'; pauseOtherPlayers(player.key); markSlidePlaying(player.index); }
         else if (value === 2 || value === 0 || word === 'paused' || word === 'ended') { player.status = 'paused'; var s = findSlide(player.index); if (s) s.classList.remove('is-playing', 'is-loading'); }
         else if (value === 3 || word === 'buffering') { var s2 = findSlide(player.index); if (s2 && player.wantPlay) s2.classList.add('is-loading'); }
+        return;
+      }
+      if (data.type === 'onMute') {
+        var muteValue = data.value && data.value.muted !== undefined ? data.value.muted : data.value;
+        var muted = muteValue === true || muteValue === 1 || String(muteValue).toLowerCase() === 'true';
+        player.muted = muted;
+        if (!muted) confirmPlayerSound(player);
+        else markSoundBlocked(player, TEXT.soundRetry);
+        return;
+      }
+      if (data.type === 'onVolumeChange') {
+        var vol = Number(data.value && data.value.volume !== undefined ? data.value.volume : data.value);
+        if (Number.isFinite(vol) && vol > 0) confirmPlayerSound(player);
+        else if (player.wantSound) markSoundBlocked(player, TEXT.soundRetry);
+        return;
+      }
+      if (/error/i.test(String(data.type || ''))) {
+        player.lastError = String((data.value && (data.value.code || data.value.message)) || data.code || data.message || data.type || '');
+        markSoundBlocked(player, /AUTOPLAY|3002/i.test(player.lastError) ? TEXT.soundBlocked : TEXT.soundRetry);
       }
     });
   });
@@ -650,7 +757,7 @@
       if (!(item.tiktoks && item.tiktoks[0])) return;
       var player = Array.from(state.players.values()).find(function (p) { return p.index === index; });
       if (player && player.status === 'playing') pauseSlide(index);
-      else { state.hasInteracted = true; playSlide(index, true); }
+      else { rememberSoundWanted(false); playSlide(index, true); }
     }, CONFIG.doubleTapMs + 20);
   }
   function showHeart(x, y) {
@@ -1028,9 +1135,9 @@
   }
 
   function unlockSoundFromGesture() {
-    state.hasInteracted = true;
-    state.soundUnlocked = false;
-    try { localStorage.removeItem('pv-sound-unlocked'); } catch (e) {}
+    rememberSoundWanted(false);
+    hideSoundHint(state.index);
+    playSlide(state.index, true);
   }
 
   function bindChrome() {
@@ -1065,6 +1172,7 @@
   }
   function onRootClick(e) {
     var btn;
+    if ((btn = e.target.closest('.pv-sound-hint'))) { e.preventDefault(); e.stopPropagation(); unlockSoundFromGesture(); return; }
     if ((btn = e.target.closest('.pv-like'))) { e.preventDefault(); e.stopPropagation(); var i = Number(btn.dataset.index); toggleLike(state.list[i], findSlide(i), true); return; }
     if ((btn = e.target.closest('.pv-comment-btn'))) { e.preventDefault(); e.stopPropagation(); openComments(state.list[Number(btn.dataset.index)]); return; }
     if ((btn = e.target.closest('.pv-follow-plus'))) { e.preventDefault(); e.stopPropagation(); var idx = Number(btn.dataset.index); toggleFollow(state.list[idx], findSlide(idx)); return; }
@@ -1076,6 +1184,9 @@
     if ((btn = e.target.closest('.pv-text-row'))) { if (!e.target.closest('.pv-translate-btn')) btn.classList.toggle('is-expanded'); }
   }
   function onRootPointerDown(e) {
+    if (!e.target.closest('input, textarea, select, .pv-comments-panel, .pv-compose-panel, .pv-translate-panel, .pv-viewer')) {
+      unlockSoundFromGesture();
+    }
     var textRow = e.target.closest('.pv-text-row');
     var translateBtn = e.target.closest('.pv-translate-btn, .pv-comment-translate');
     if (textRow || translateBtn) { clearTimeout(state.translateLongPressTimer); state.translateLongPressTimer = setTimeout(function () { openTranslateSettings(); }, 650); }
