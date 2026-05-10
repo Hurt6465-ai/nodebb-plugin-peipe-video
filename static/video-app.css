@@ -1822,7 +1822,24 @@ body.pv-video-mode [component="sidebar"] {
 }
 
 
-/* Peipe video v9 audio behavior: sound starts muted; user must tap sound hint to unmute. */
+/* Peipe video v10 manual playback: each TikTok starts paused; tap overlay to play with sound. */
 .pv-sound-hint.is-show {
   pointer-events: auto !important;
+}
+
+
+/* Peipe video v10 manual-play overlay */
+.pv-sound-hint {
+  z-index: 18 !important;
+  min-height: 48px !important;
+  padding: 12px 18px !important;
+  background: rgba(0,0,0,.62) !important;
+}
+.pv-sound-hint span::before {
+  content: '▶';
+  font-size: 16px;
+  line-height: 1;
+}
+.pv-sound-hint span {
+  font-size: 0 !important;
 }
