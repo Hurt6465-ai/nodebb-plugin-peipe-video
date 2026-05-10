@@ -1631,9 +1631,9 @@ body.pv-video-mode [component="sidebar"] {
   align-items: center !important;
   width: 100% !important;
   min-height: 44px !important;
-  border-radius: 22px !important;
-  background: rgba(17,24,39,.075) !important;
-  padding: 0 6px !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  padding: 0 !important;
   box-shadow: none !important;
   border: 0 !important;
 }
@@ -1642,11 +1642,11 @@ body.pv-video-mode [component="sidebar"] {
   height: 42px !important;
   min-width: 0 !important;
   border: 0 !important;
-  border-radius: 0 !important;
-  background: transparent !important;
+  border-radius: 20px !important;
+  background: rgba(17,24,39,.075) !important;
   box-shadow: none !important;
   outline: none !important;
-  padding: 0 8px !important;
+  padding: 0 14px !important;
   color: #111827 !important;
   font-size: 15px !important;
 }
@@ -1758,88 +1758,4 @@ body.pv-video-mode [component="sidebar"] {
   .pv-desc { bottom: max(116px, calc(var(--pv-bottom-safe) + 110px)) !important; right: 76px !important; }
   .pv-toolbar { bottom: max(176px, calc(var(--pv-bottom-safe) + 168px)) !important; }
   .pv-tap-zone { bottom: max(208px, calc(var(--pv-bottom-safe) + 200px)) !important; }
-}
-
-/* Peipe video v8 audio-unlock patch */
-.pv-sound-hint {
-  position: absolute !important;
-  left: 50% !important;
-  top: 50% !important;
-  z-index: 15 !important;
-  transform: translate(-50%, -50%) scale(.96) !important;
-  display: inline-flex !important;
-  align-items: center !important;
-  gap: 8px !important;
-  max-width: min(78vw, 340px) !important;
-  min-height: 42px !important;
-  padding: 10px 15px !important;
-  border: 0 !important;
-  border-radius: 999px !important;
-  background: rgba(0,0,0,.54) !important;
-  color: #fff !important;
-  font-size: 14px !important;
-  font-weight: 900 !important;
-  line-height: 1.2 !important;
-  box-shadow: 0 8px 30px rgba(0,0,0,.32) !important;
-  backdrop-filter: blur(16px) saturate(1.15) !important;
-  -webkit-backdrop-filter: blur(16px) saturate(1.15) !important;
-  opacity: 0 !important;
-  pointer-events: none !important;
-  transition: opacity .16s ease, transform .16s ease !important;
-  touch-action: manipulation !important;
-}
-
-.pv-sound-hint span {
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  width: 24px !important;
-  height: 24px !important;
-  flex: 0 0 auto !important;
-  font-size: 17px !important;
-  line-height: 1 !important;
-}
-
-.pv-sound-hint b {
-  display: block !important;
-  min-width: 0 !important;
-  color: #fff !important;
-  font-size: 14px !important;
-  font-weight: 900 !important;
-  white-space: nowrap !important;
-  text-shadow: 0 1px 2px rgba(0,0,0,.28) !important;
-}
-
-.pv-sound-hint.is-show {
-  opacity: 1 !important;
-  pointer-events: auto !important;
-  transform: translate(-50%, -50%) scale(1) !important;
-}
-
-.pv-slide-item.is-playing .pv-sound-hint:not(.is-show) {
-  opacity: 0 !important;
-  pointer-events: none !important;
-}
-
-
-/* Peipe video v10 manual playback: each TikTok starts paused; tap overlay to play with sound. */
-.pv-sound-hint.is-show {
-  pointer-events: auto !important;
-}
-
-
-/* Peipe video v10 manual-play overlay */
-.pv-sound-hint {
-  z-index: 18 !important;
-  min-height: 48px !important;
-  padding: 12px 18px !important;
-  background: rgba(0,0,0,.62) !important;
-}
-.pv-sound-hint span::before {
-  content: '▶';
-  font-size: 16px;
-  line-height: 1;
-}
-.pv-sound-hint span {
-  font-size: 0 !important;
 }
