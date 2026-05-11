@@ -11,11 +11,10 @@
     cid: {cid},
     pageSize: 12,
 
-    // 预载设置：视频自动静音播放，预载下2个视频，预热6个封面
-    preloadAhead: 2,
-    preloadVideoAhead: 2, 
-    virtualTotal: 4,
-    officialControlsMs: 500,
+    // v12: muted autoplay + user sound toggle; 1-2 TikTok iframe preload; 6 covers ahead
+    preloadAhead: 1,
+    preloadVideoAhead: 1,
+    virtualTotal: 3,
     coverPreloadAhead: 6,
 
     imageMax: {imageMax},
