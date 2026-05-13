@@ -251,10 +251,7 @@
     return String(me.uid || '') === String(author.uid || '') || String(me.userslug || '').toLowerCase() === String(author.userslug || '').toLowerCase();
   }
   function authorHref(author) { return author && author.userslug ? rel('/user/' + encodeURIComponent(author.userslug)) : '#'; }
-  function avatarSrc(author) {
-    author = author || {};
-    return author.picture || author.uploadedpicture || author.avatar || author.accountPicture || '';
-  }
+  function avatarSrc(author) { return author && author.picture ? author.picture : ''; }
   function canonicalTikTokUrl(url) {
     var m = String(url || '').replace(/&amp;/g, '&').match(RE.tiktokOne);
     return m ? 'https://www.tiktok.com/@' + m[1] + '/video/' + m[2] : String(url || '');
@@ -718,8 +715,6 @@
       if (ahead > 0 && nextIdx < state.list.length) {
         var nextItem = state.list[nextIdx];
         if (nextItem && nextItem.tiktoks && nextItem.tiktoks[0]) {
-          if (curPlayer.warmScheduledFor === nextIdx) return;
-          curPlayer.warmScheduledFor = nextIdx;
           // 延迟创建下一个 iframe，让当前视频先稳定播放
           setTimeout(function () {
             if (state.index !== fromIndex) return;
@@ -1013,21 +1008,8 @@
   }
   function followStoreKey() { return 'pv-follow-state:' + localUserSuffix(); }
   function followStore() { return safeJsonGet(followStoreKey(), {}); }
-  function readFollow(author) {
-    if (!author) return false;
-    var s = followStore();
-    var uid = authorUid(author);
-    if (uid && s['uid:' + uid] !== undefined) return !!s['uid:' + uid];
-    if (author.userslug && s['slug:' + String(author.userslug).toLowerCase()] !== undefined) return !!s['slug:' + String(author.userslug).toLowerCase()];
-    return false;
-  }
-  function writeFollow(author, following) {
-    var s = followStore();
-    var uid = authorUid(author);
-    if (uid) s['uid:' + uid] = !!following;
-    if (author && author.userslug) s['slug:' + String(author.userslug).toLowerCase()] = !!following;
-    safeJsonSet(followStoreKey(), s);
-  }
+  function readFollow(author) { if (!author) return false; var s = followStore(); if (author.uid && s['uid:' + author.uid] !== undefined) return !!s['uid:' + author.uid]; if (author.userslug && s['slug:' + String(author.userslug).toLowerCase()] !== undefined) return !!s['slug:' + String(author.userslug).toLowerCase()]; return false; }
+  function writeFollow(author, following) { var s = followStore(); if (author.uid) s['uid:' + author.uid] = !!following; if (author.userslug) s['slug:' + String(author.userslug).toLowerCase()] = !!following; safeJsonSet(followStoreKey(), s); }
   function updateFollowUi(slide, following) { var btn = $('.pv-follow-plus', slide); if (!btn) return; btn.classList.toggle('is-following', !!following); btn.textContent = following ? '✓' : '+'; }
   function authorUid(author) {
     author = author || {};
