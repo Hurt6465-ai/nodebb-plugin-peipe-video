@@ -307,8 +307,11 @@
         slideChangeTransitionStart: function (swiper) {
           state.hasInteracted = true;
           hideComposerFab();
-          warmVideoWindow(typeof swiper.activeIndex === 'number' ? swiper.activeIndex : state.index);
-          if (typeof swiper.previousIndex === 'number') pauseSlide(swiper.previousIndex);
+          var targetIndex = typeof swiper.activeIndex === 'number' ? swiper.activeIndex : state.index;
+          var previousIndex = typeof swiper.previousIndex === 'number' ? swiper.previousIndex : state.index;
+          state.index = targetIndex;
+          warmVideoWindow(targetIndex);
+          if (previousIndex !== targetIndex) pauseSlide(previousIndex, true);
         },
         slideChange: function (swiper) {
           state.index = swiper.activeIndex || 0;
@@ -354,7 +357,7 @@
     return '' +
       '<section class="pv-slide-item ' + (hasVideo ? 'is-video' : 'is-image') + '" data-index="' + index + '" data-tid="' + escapeHtml(item.tid || '') + '">' +
         '<div class="pv-media">' + mediaHtml + '</div>' +
-        (hasVideo ? '<div class="pv-cover"><img alt="cover"></div>' : '') +
+        (hasVideo ? '<div class="pv-cover is-hidden"><img alt=""></div>' : '') +
         '<div class="pv-gradient"></div>' +
         (hasVideo ? '<div class="pv-tap-zone" data-index="' + index + '"></div>' : '') +
         '<div class="pv-toolbar">' +
@@ -452,7 +455,7 @@
   function playerKey(index, videoId) { return index + ':' + videoId; }
   function isWarmIndex(index) {
     var ahead = Math.max(1, CONFIG.preloadVideoAhead || 2);
-    return index === state.index || index === state.index - 1 || (index > state.index && index <= state.index + ahead);
+    return index === state.index || (index > state.index && index <= state.index + ahead);
   }
   function ensureTikTokPlayer(index, autoplay) {
     var item = state.list[index];
@@ -477,9 +480,22 @@
     player = { key: key, index: index, item: item, videoId: tk.videoId, iframe: iframe, ready: false, wantPlay: false, status: 'paused' };
     state.players.set(key, player);
     fetchCover(tk.videoId, tk.url).then(function (url) {
-      if (!url) return;
+      var cover = $('.pv-cover', slide);
       var img = $('.pv-cover img', slide);
-      if (img && !img.src) img.src = url;
+      if (!cover || !img || !url) {
+        if (cover) cover.classList.add('is-hidden');
+        return;
+      }
+      img.onload = function () {
+        cover.classList.remove('is-hidden');
+        cover.classList.add('has-cover');
+      };
+      img.onerror = function () {
+        cover.classList.add('is-hidden');
+        cover.classList.remove('has-cover');
+        try { img.removeAttribute('src'); } catch (e) {}
+      };
+      if (!img.src) img.src = url;
     });
     return player;
   }
@@ -508,15 +524,24 @@
     if (arguments.length >= 3) msg.value = value;
     iframe.contentWindow.postMessage(msg, 'https://www.tiktok.com');
   }
-  function hardStopPlayer(player) {
+  function hardStopPlayer(player, force) {
     if (!player || !player.iframe) return;
     sendToPlayer(player.iframe, 'pause');
-    setTimeout(function () { sendToPlayer(player.iframe, 'pause'); }, 60);
-    setTimeout(function () {
-      if (!player || !player.iframe || player.index === state.index || isWarmIndex(player.index)) return;
-      try { player.iframe.src = 'about:blank'; } catch (e) {}
-      player.ready = false; player.status = 'paused'; player.wantPlay = false;
-    }, 180);
+    setTimeout(function () { sendToPlayer(player.iframe, 'pause'); }, 40);
+    var stop = function () {
+      if (!player || !player.iframe) return;
+      if (!force && (player.index === state.index || isWarmIndex(player.index))) return;
+      try {
+        player.iframe.src = 'about:blank';
+        if (player.iframe.parentNode) player.iframe.remove();
+      } catch (e) {}
+      player.ready = false;
+      player.status = 'paused';
+      player.wantPlay = false;
+      state.players.delete(player.key);
+    };
+    if (force) stop();
+    else setTimeout(stop, 140);
   }
   function playSlide(index, userGesture) {
     var item = state.list[index];
@@ -535,15 +560,15 @@
     setTimeout(function () { sendToPlayer(player.iframe, 'unMute'); sendToPlayer(player.iframe, 'play'); }, 720);
     setTimeout(function () { if (player.wantPlay && player.status !== 'playing') markSlidePlaying(index); }, 1600);
   }
-  function pauseSlide(index) {
+  function pauseSlide(index, force) {
     state.players.forEach(function (p) {
       if (p.index !== index) return;
       p.wantPlay = false; p.status = 'paused';
       if (p.iframe) {
         sendToPlayer(p.iframe, 'pause');
-        setTimeout(function () { sendToPlayer(p.iframe, 'pause'); }, 80);
+        setTimeout(function () { sendToPlayer(p.iframe, 'pause'); }, 60);
       }
-      if (!isWarmIndex(p.index)) hardStopPlayer(p);
+      if (force || !isWarmIndex(p.index)) hardStopPlayer(p, !!force);
     });
     var slide = findSlide(index);
     if (slide) slide.classList.remove('is-playing', 'is-loading');
@@ -551,12 +576,12 @@
   function pauseOtherPlayers(currentKey) {
     state.players.forEach(function (p, key) {
       if (key === currentKey) return;
-      var far = !isWarmIndex(p.index) || Math.abs(p.index - state.index) > CONFIG.preloadAhead;
+      var shouldHardStop = p.index < state.index || !isWarmIndex(p.index) || Math.abs(p.index - state.index) > CONFIG.preloadAhead;
       p.wantPlay = false; p.status = 'paused';
       if (p.iframe) {
         sendToPlayer(p.iframe, 'pause');
-        setTimeout(function () { sendToPlayer(p.iframe, 'pause'); }, 80);
-        if (far) hardStopPlayer(p);
+        setTimeout(function () { sendToPlayer(p.iframe, 'pause'); }, 60);
+        if (shouldHardStop) hardStopPlayer(p, p.index < state.index);
       }
       var slide = findSlide(p.index);
       if (slide) slide.classList.remove('is-playing', 'is-loading');
@@ -566,8 +591,7 @@
     var keep = Math.max(CONFIG.preloadAhead + 1, (CONFIG.preloadVideoAhead || 2) + 2);
     state.players.forEach(function (p, key) {
       if (Math.abs(p.index - state.index) <= keep || isWarmIndex(p.index)) return;
-      try { if (p.iframe) { sendToPlayer(p.iframe, 'pause'); p.iframe.src = 'about:blank'; p.iframe.remove(); } } catch (e) {}
-      state.players.delete(key);
+      hardStopPlayer(p, true);
     });
   }
   function activateCurrent() {
@@ -623,7 +647,9 @@
   function fetchCover(videoId, url) {
     var cached = safeJsonGet(coverCacheKey(videoId), null);
     if (cached && cached.url && cached.expiresAt > Date.now()) return Promise.resolve(cached.url);
-    return fetch('https://www.tiktok.com/oembed?url=' + encodeURIComponent(canonicalTikTokUrl(url)), { cache: 'force-cache' })
+    var canonical = canonicalTikTokUrl(url);
+    if (!/^https?:\/\//i.test(canonical)) return Promise.resolve('');
+    return fetch('https://www.tiktok.com/oembed?url=' + encodeURIComponent(canonical), { cache: 'force-cache' })
       .then(function (r) { return r.ok ? r.json() : {}; })
       .then(function (json) { var thumb = json.thumbnail_url || ''; if (thumb) safeJsonSet(coverCacheKey(videoId), { url: thumb, expiresAt: Date.now() + CONFIG.coverCacheMs }); return thumb; })
       .catch(function () { return ''; });
@@ -1108,9 +1134,17 @@
   function onRootPointerCancel() { clearTimeout(state.translateLongPressTimer); state.comments.dragging = false; state.comments.dragCandidate = false; var p = $('.pv-comments-panel', state.root); if (p) p.style.transform = ''; }
 
   function showEmpty(text) { var old = $('.pv-empty-page', state.root); if (old) old.remove(); var div = document.createElement('div'); div.className = 'pv-empty-page'; div.textContent = text || TEXT.empty; state.root.appendChild(div); }
+  function injectRuntimeFixStyles() {
+    if (document.getElementById('pv-video-runtime-fix-style')) return;
+    var style = document.createElement('style');
+    style.id = 'pv-video-runtime-fix-style';
+    style.textContent = '#peipe-video-app .pv-cover.is-hidden{display:none!important;}#peipe-video-app .pv-cover img:not([src]){display:none!important;}#peipe-video-app .pv-cover img[src=""]{display:none!important;}';
+    document.head.appendChild(style);
+  }
+
   function init() {
     state.root = document.getElementById('peipe-video-app'); if (!state.root) return;
-    document.body.classList.add('pv-video-mode'); addPreconnects(); buildChrome(); showComposeFabInitial();
+    document.body.classList.add('pv-video-mode'); injectRuntimeFixStyles(); addPreconnects(); buildChrome(); showComposeFabInitial();
     ensureSwiper().then(function () { return loadFeed(true); });
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
