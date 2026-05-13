@@ -1654,3 +1654,189 @@ body.pv-video-mode [component="sidebar"] {
   top: -8px !important;
   bottom: auto !important;
 }
+
+
+/* ===== v18 final polish =====
+   - Reduce TikTok iframe workload: JS now warms only one next video by default.
+   - Icon-only sound button.
+   - Outline comment bubble.
+   - Disable author/avatar navigation.
+   - Telegram-style comment input.
+   - Keep TikTok iframe from stealing taps.
+*/
+#peipe-video-app .pv-tiktok-frame {
+  pointer-events: none !important;
+}
+
+#peipe-video-app .pv-slide-item.is-video .pv-tap-zone {
+  right: 72px !important;
+  bottom: max(72px, calc(var(--pv-bottom-safe) + 66px)) !important;
+  touch-action: pan-y !important;
+}
+
+#peipe-video-app .pv-avatar-link,
+#peipe-video-app .pv-username {
+  pointer-events: none !important;
+  cursor: default !important;
+}
+
+#peipe-video-app .pv-toolbar {
+  gap: 9px !important;
+  bottom: max(176px, calc(var(--pv-bottom-safe) + 168px)) !important;
+}
+
+#peipe-video-app .pv-sound-label {
+  display: none !important;
+}
+
+#peipe-video-app .pv-sound-btn {
+  min-height: 36px !important;
+}
+
+#peipe-video-app .pv-sound-btn .pv-action-icon {
+  width: 31px !important;
+  height: 31px !important;
+}
+
+#peipe-video-app .pv-sound-svg {
+  width: 24px !important;
+  height: 24px !important;
+  fill: none !important;
+  stroke: currentColor !important;
+  stroke-width: 2.15px !important;
+  stroke-linecap: round !important;
+  stroke-linejoin: round !important;
+}
+
+#peipe-video-app .pv-comment-svg path {
+  fill: rgba(0,0,0,0) !important;
+  stroke: rgba(255,255,255,.98) !important;
+  stroke-width: 3.1px !important;
+  stroke-linejoin: round !important;
+  paint-order: stroke fill !important;
+}
+
+#peipe-video-app .pv-comment-svg circle {
+  fill: rgba(255,255,255,.98) !important;
+  stroke: none !important;
+}
+
+#peipe-video-app .pv-follow-plus {
+  top: -11px !important;
+  bottom: auto !important;
+  width: 20px !important;
+  height: 20px !important;
+  min-width: 20px !important;
+  border: 2px solid rgba(255,255,255,.96) !important;
+  line-height: 16px !important;
+}
+
+#peipe-video-app .pv-comments-panel {
+  height: auto !important;
+  min-height: 238px !important;
+  max-height: min(82dvh, 700px) !important;
+}
+
+#peipe-video-app .pv-comments-list {
+  flex: 0 1 auto !important;
+  min-height: 88px !important;
+  max-height: min(52dvh, 430px) !important;
+}
+
+#peipe-video-app .pv-empty-comments {
+  min-height: 84px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+#peipe-video-app .pv-comment-send-row {
+  padding: 8px 2px max(8px, var(--pv-bottom-safe)) !important;
+  background: transparent !important;
+  border: 0 !important;
+}
+
+#peipe-video-app .pv-comment-input-wrap {
+  width: 100% !important;
+  min-height: 46px !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+  padding: 4px 5px !important;
+  border-radius: 999px !important;
+  background: rgba(255,255,255,.92) !important;
+  box-shadow: 0 6px 22px rgba(15,23,42,.08) !important;
+  border: 1px solid rgba(15,23,42,.06) !important;
+}
+
+#peipe-video-app .pv-comment-input-wrap .pv-comment-input {
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+  height: 38px !important;
+  border: 0 !important;
+  border-radius: 999px !important;
+  background: transparent !important;
+  outline: none !important;
+  box-shadow: none !important;
+  padding: 0 8px !important;
+  color: #111827 !important;
+  font-size: 15px !important;
+}
+
+#peipe-video-app .pv-comment-input-wrap .pv-comment-input::placeholder {
+  color: rgba(17,24,39,.44) !important;
+}
+
+#peipe-video-app .pv-comment-input-wrap .pv-comment-input-translate,
+#peipe-video-app .pv-comment-input-wrap .pv-comment-action-btn {
+  flex: 0 0 36px !important;
+  width: 36px !important;
+  height: 36px !important;
+  min-width: 36px !important;
+  border: 0 !important;
+  border-radius: 999px !important;
+  background: transparent !important;
+  color: rgba(17,24,39,.64) !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 0 !important;
+  box-shadow: none !important;
+}
+
+#peipe-video-app .pv-comment-input-wrap .pv-comment-action-btn.is-send {
+  background: #2aabee !important;
+  color: #fff !important;
+}
+
+#peipe-video-app .pv-comment-input-wrap .pv-comment-action-btn.recording {
+  color: #ff2442 !important;
+}
+
+#peipe-video-app .pv-comment-input-wrap .pv-mic-svg,
+#peipe-video-app .pv-comment-input-wrap .pv-send-svg {
+  width: 20px !important;
+  height: 20px !important;
+  fill: none !important;
+  stroke: currentColor !important;
+  stroke-width: 2.1px !important;
+  stroke-linecap: round !important;
+  stroke-linejoin: round !important;
+}
+
+#peipe-video-app .pv-comment-input-wrap .pv-mic-svg path,
+#peipe-video-app .pv-comment-input-wrap .pv-send-svg path {
+  fill: none !important;
+  stroke: currentColor !important;
+}
+
+#peipe-video-app .pv-cover-fallback-wrap:not(.has-cover) {
+  background:
+    radial-gradient(circle at 52% 35%, rgba(42,171,238,.26), transparent 0 28%, rgba(255,36,66,.10) 48%, rgba(0,0,0,.52) 82%),
+    linear-gradient(145deg, #172033 0%, #090b12 58%, #18090e 100%) !important;
+}
+
+#peipe-video-app .pv-cover-play {
+  display: none !important;
+}
+
