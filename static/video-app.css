@@ -4,10 +4,10 @@
   --pv-accent: #ff2442;
   --pv-text-shadow: 0 1px 3px rgba(0, 0, 0, .64);
   --pv-official-bottom-reserve: 64px;
-  --pv-official-play-pass: 64px;
-  --pv-official-sound-left: 64px;
-  --pv-official-sound-width: 88px;
-  --pv-official-block-left: 152px;
+  --pv-official-play-pass: 54px;
+  --pv-official-sound-left: 54px;
+  --pv-official-sound-width: 178px;
+  --pv-official-block-left: 232px;
 }
 
 html:has(.pv-page-active),
@@ -223,8 +223,8 @@ body.pv-video-mode [component="sidebar"] {
 }
 
 /* ===== 关键：TikTok iframe 拦截层 =====
-   - 底部左侧播放按钮区域始终不覆盖，让 TikTok 官方播放按钮可点。
-   - 声音按钮区域由透明安全代理接管：用户点的是底部官方位置，但不会触发 TikTok 下载跳转。
+   - 左下角播放按钮区域始终不覆盖，让 TikTok 官方播放按钮可点。
+   - 声音按钮/附近区域由透明安全代理接管：点击即 unMute + play，不触发 TikTok 下载跳转。
    - 其它 iframe 区域持续拦截，避免点视频主体跳到下载页。
 */
 .pv-iframe-shield {
