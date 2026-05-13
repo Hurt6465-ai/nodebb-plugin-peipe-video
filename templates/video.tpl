@@ -4,7 +4,7 @@
   <div class="pv-init-loading">[[peipe-video:loading]]</div>
 </div>
 
-<link rel="stylesheet" href="{relative_path}/plugins/nodebb-plugin-peipe-video/static/video-app.css?v=14">
+<link rel="stylesheet" href="{relative_path}/plugins/nodebb-plugin-peipe-video/static/video-app.css?v=16">
 
 <script>
   window.PEIPE_VIDEO_CONFIG = Object.assign({}, window.PEIPE_VIDEO_CONFIG || {}, {
@@ -12,9 +12,12 @@
     pageSize: 12,
     preloadAhead: 5,
     preloadVideoAhead: 2,
+    keepWarmVideoAhead: 2,
+    keepWarmVideoBehind: 1,
     virtualTotal: 5,
     imageMax: {imageMax},
     coverCacheApi: '{relative_path}/api/v3/plugins/peipe-video/cover',
+    coverCacheEndpoint: '{relative_path}/api/v3/plugins/peipe-video/cover',
     disableDoubleTapLike: true,
     manualPauseLock: true,
     swiperCdnCss: '/plugins/nodebb-plugin-peipe-video/static/lib/swiper-bundle.min.css',
@@ -22,6 +25,6 @@
   });
 </script>
 
-<script src="{relative_path}/plugins/nodebb-plugin-peipe-video/static/video-app.js?v=14"></script>
+<script src="{relative_path}/plugins/nodebb-plugin-peipe-video/static/video-app.js?v=16"></script>
 
 <!-- IMPORT partials/footer.tpl -->
