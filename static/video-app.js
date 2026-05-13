@@ -1,7 +1,10 @@
-/* Peipe /video mobile discover page v7 optimized final - compressed images build
+/* Peipe /video mobile discover page v7 optimized final - compressed images + follow/image UI fixes build
    - Adds cost-effective image compression for compose images: 1080px / ~90KB target, WebP preferred
    - HEIC/HEIF are converted when the browser can decode them; if conversion fails, upload is rejected
    - GIF/SVG are rejected for compose image uploads to avoid large/unsafe originals
+   - Feed images use cover + centered crop to avoid black side bars; viewer still shows full image
+   - Follow button moved to avatar lower-left and follow API uses raw NodeBB v3 fetch
+   - Manual video pause shows a center play button
    - TikTok playback/comment/translate behavior kept from v7
 */
 (function () {
@@ -437,7 +440,7 @@
         '<div class="pv-media">' + mediaHtml + '</div>' +
         (hasVideo ? renderVideoCoverFallback(item, images) : '') +
         '<div class="pv-gradient"></div>' +
-        (hasVideo ? '<div class="pv-tap-zone" data-index="' + index + '"></div>' : '') +
+        (hasVideo ? '<div class="pv-tap-zone" data-index="' + index + '"></div><button type="button" class="pv-center-play" data-index="' + index + '" aria-label="播放">▶</button>' : '') +
         '<div class="pv-toolbar">' +
           '<div class="pv-avatar-wrap"><span class="pv-avatar-link">' + avatarHtml + '</span>' +
           (author.uid && !isOwnAuthor(author) ? '<button type="button" class="pv-follow-plus ' + (following ? 'is-following' : '') + '" data-index="' + index + '">' + (following ? '✓' : '+') + '</button>' : '') + '</div>' +
@@ -761,7 +764,7 @@
     var seq = player.playSeq;
     pauseOtherPlayers(player.key);
     var slide = findSlide(index);
-    if (slide) slide.classList.add('is-loading');
+    if (slide) { slide.classList.add('is-loading'); slide.classList.remove('is-paused'); }
 
     function stillWantsPlay() {
       return player.wantPlay && player.playSeq === seq && state.manualPausedKey !== player.key && player.index === state.index;
@@ -792,7 +795,10 @@
       if (force || (!manual && !isWarmIndex(p.index))) hardStopPlayer(p, !!force);
     });
     var slide = findSlide(index);
-    if (slide) slide.classList.remove('is-playing', 'is-loading');
+    if (slide) {
+      slide.classList.remove('is-playing', 'is-loading');
+      slide.classList.toggle('is-paused', !!manual && index === state.index);
+    }
   }
   function pauseOtherPlayers(currentKey) {
     state.players.forEach(function (p, key) {
@@ -811,7 +817,7 @@
       }
       if (!warm || Math.abs(p.index - state.index) > CONFIG.preloadAhead) hardStopPlayer(p, true);
       var slide = findSlide(p.index);
-      if (slide) slide.classList.remove('is-playing', 'is-loading');
+      if (slide) slide.classList.remove('is-playing', 'is-loading', 'is-paused');
     });
   }
   function prunePlayers() {
@@ -827,12 +833,18 @@
     $$('.pv-slide-item', state.root).forEach(function (slide) {
       var idx = Number(slide.dataset.index || -1);
       slide.classList.toggle('is-active', idx === state.index);
-      if (idx !== state.index) slide.classList.remove('is-playing', 'is-loading');
+      if (idx !== state.index) slide.classList.remove('is-playing', 'is-loading', 'is-paused');
     });
     var item = state.list[state.index];
     var currentKey = item && item.tiktoks && item.tiktoks[0] ? playerKey(state.index, item.tiktoks[0].videoId) : '';
-    if (currentKey !== state.manualPausedKey) playSlide(state.index, !!(state.hasInteracted || state.soundUnlocked));
-    else warmVideoWindow(state.index);
+    var curSlide = findSlide(state.index);
+    if (currentKey !== state.manualPausedKey) {
+      if (curSlide) curSlide.classList.remove('is-paused');
+      playSlide(state.index, !!(state.hasInteracted || state.soundUnlocked));
+    } else {
+      if (curSlide) curSlide.classList.add('is-paused');
+      warmVideoWindow(state.index);
+    }
     prunePlayers();
   }
   function markSlidePlaying(index) {
@@ -841,7 +853,7 @@
     var cover = $('.pv-cover', slide);
     if (cover) cover.classList.add('is-hidden');
     slide.classList.add('is-playing');
-    slide.classList.remove('is-loading');
+    slide.classList.remove('is-loading', 'is-paused');
     updateSoundUi();
   }
   window.addEventListener('message', function (event) {
@@ -978,13 +990,71 @@
   function readFollow(author) { if (!author) return false; var s = followStore(); if (author.uid && s['uid:' + author.uid] !== undefined) return !!s['uid:' + author.uid]; if (author.userslug && s['slug:' + String(author.userslug).toLowerCase()] !== undefined) return !!s['slug:' + String(author.userslug).toLowerCase()]; return false; }
   function writeFollow(author, following) { var s = followStore(); if (author.uid) s['uid:' + author.uid] = !!following; if (author.userslug) s['slug:' + String(author.userslug).toLowerCase()] = !!following; safeJsonSet(followStoreKey(), s); }
   function updateFollowUi(slide, following) { var btn = $('.pv-follow-plus', slide); if (!btn) return; btn.classList.toggle('is-following', !!following); btn.textContent = following ? '✓' : '+'; }
+  function authorUid(author) {
+    author = author || {};
+    return String(author.uid || author.userId || author.userid || author.uidNumber || '').trim();
+  }
+  function updateFollowUiForAuthor(author, following) {
+    var uid = authorUid(author);
+    var slug = String(author && author.userslug || '').toLowerCase();
+    $$('.pv-slide-item', state.root).forEach(function (slide) {
+      var idx = Number(slide.dataset.index || -1);
+      var item = state.list[idx] || {};
+      var a = item.author || {};
+      var same = (uid && authorUid(a) === uid) || (slug && String(a.userslug || '').toLowerCase() === slug);
+      if (same) updateFollowUi(slide, following);
+    });
+  }
+  function followApi(uid, follow) {
+    var token = csrfToken();
+    if (!token) return Promise.reject(new Error('CSRF 失效，请刷新页面后重试'));
+    return fetch(rel('/api/v3/users/' + encodeURIComponent(uid) + '/follow'), {
+      method: follow ? 'PUT' : 'DELETE',
+      credentials: 'same-origin',
+      headers: {
+        accept: 'application/json',
+        'x-csrf-token': token,
+        'x-requested-with': 'XMLHttpRequest'
+      }
+    }).then(function (res) {
+      return res.text().then(function (text) {
+        var json = {};
+        try { json = text ? JSON.parse(text) : {}; } catch (e) {}
+        if (!res.ok) {
+          var msg = json.error || json.message || (json.status && json.status.message) || text || ('HTTP ' + res.status);
+          throw new Error(msg);
+        }
+        return json.response || json;
+      });
+    });
+  }
   function toggleFollow(item, slide) {
     if (!isLoggedIn()) return alertError(TEXT.loginFirst);
-    var author = item.author || {}; if (!author.uid) return alertError(TEXT.followFail);
-    var old = readFollow(author); var next = !old; writeFollow(author, next); updateFollowUi(slide, next);
-    apiFetch('/api/v3/users/' + encodeURIComponent(author.uid) + '/follow', { method: next ? 'PUT' : 'DELETE', headers: { 'x-csrf-token': csrfToken() } })
+    item = item || {};
+    var author = item.author || {};
+    var uid = authorUid(author);
+    if (!uid) return alertError(TEXT.followFail + '：缺少用户 ID');
+    if (item._followPending) return;
+    var old = readFollow(author) || !!(item.viewer && item.viewer.following);
+    var next = !old;
+    item._followPending = true;
+    item.viewer = item.viewer || {};
+    item.viewer.following = next;
+    writeFollow(author, next);
+    updateFollowUi(slide, next);
+    updateFollowUiForAuthor(author, next);
+    followApi(uid, next)
       .then(function () { alertSuccess(next ? TEXT.followed : TEXT.unfollowed); })
-      .catch(function () { writeFollow(author, old); updateFollowUi(slide, old); alertError(next ? TEXT.followFail : TEXT.unfollowFail); });
+      .catch(function (err) {
+        item.viewer.following = old;
+        writeFollow(author, old);
+        updateFollowUi(slide, old);
+        updateFollowUiForAuthor(author, old);
+        alertError((err && err.message) || (next ? TEXT.followFail : TEXT.unfollowFail));
+      })
+      .finally(function () {
+        item._followPending = false;
+      });
   }
 
   var LANGUAGE_META = {
@@ -1603,6 +1673,15 @@
   }
   function onRootClick(e) {
     var btn;
+    if ((btn = e.target.closest('.pv-center-play'))) {
+      e.preventDefault();
+      e.stopPropagation();
+      var ci = Number(btn.dataset.index);
+      state.manualPausedKey = '';
+      unlockSoundFromGesture();
+      playSlide(ci, true);
+      return;
+    }
     if ((btn = e.target.closest('.pv-sound-btn'))) { e.preventDefault(); e.stopPropagation(); toggleSound(Number(btn.dataset.index)); return; }
     if ((btn = e.target.closest('.pv-like'))) { e.preventDefault(); e.stopPropagation(); var i = Number(btn.dataset.index); toggleLike(state.list[i], findSlide(i), true); return; }
     if ((btn = e.target.closest('.pv-comment-btn'))) { e.preventDefault(); e.stopPropagation(); openComments(state.list[Number(btn.dataset.index)]); return; }
@@ -1687,7 +1766,13 @@
       '#peipe-video-app .pv-tiktok-frame{pointer-events:none!important;}' +
       '#peipe-video-app .pv-mic-svg,#peipe-video-app .pv-send-svg,#peipe-video-app .pv-sound-svg{width:20px!important;height:20px!important;fill:none!important;stroke:currentColor!important;stroke-width:2.2px!important;stroke-linecap:round!important;stroke-linejoin:round!important;}' +
       '#peipe-video-app .pv-mic-svg path,#peipe-video-app .pv-send-svg path,#peipe-video-app .pv-sound-svg path{fill:none!important;stroke:currentColor!important;}' +
-      '#peipe-video-app .pv-follow-plus{top:-8px!important;bottom:auto!important;z-index:4!important;}';
+      '#peipe-video-app .pv-slide-item.is-image .pv-media,#peipe-video-app .pv-image-main,#peipe-video-app .pv-image-swiper,#peipe-video-app .pv-image-swiper .swiper-wrapper,#peipe-video-app .pv-image-swiper-slide{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;background:#050505!important;overflow:hidden!important;}' +
+      '#peipe-video-app .pv-slide-item.is-image .pv-image-swiper-slide img{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;object-fit:cover!important;object-position:center center!important;display:block!important;background:#050505!important;}' +
+      '#peipe-video-app .pv-viewer img{max-width:100%!important;max-height:100%!important;object-fit:contain!important;object-position:center center!important;}' +
+      '#peipe-video-app .pv-avatar-wrap{position:relative!important;}' +
+      '#peipe-video-app .pv-follow-plus{left:-7px!important;right:auto!important;bottom:-7px!important;top:auto!important;z-index:4!important;}' +
+      '#peipe-video-app .pv-center-play{position:absolute!important;left:50%!important;top:50%!important;transform:translate(-50%,-50%) scale(.96)!important;width:76px!important;height:76px!important;border:0!important;border-radius:999px!important;background:rgba(255,255,255,.18)!important;color:#fff!important;display:flex!important;align-items:center!important;justify-content:center!important;font-size:34px!important;line-height:1!important;padding:0 0 0 5px!important;opacity:0!important;visibility:hidden!important;pointer-events:none!important;z-index:4!important;backdrop-filter:blur(12px)!important;-webkit-backdrop-filter:blur(12px)!important;box-shadow:0 12px 42px rgba(0,0,0,.38)!important;transition:opacity .16s ease,transform .16s ease,visibility .16s ease!important;}' +
+      '#peipe-video-app .pv-slide-item.is-video.is-paused .pv-center-play{opacity:1!important;visibility:visible!important;pointer-events:auto!important;transform:translate(-50%,-50%) scale(1)!important;}';
     document.head.appendChild(style);
   }
 
