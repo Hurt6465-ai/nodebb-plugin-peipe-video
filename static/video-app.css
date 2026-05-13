@@ -1538,3 +1538,26 @@ body.pv-video-mode [component="sidebar"] {
     bottom: max(110px, calc(var(--pv-bottom-safe) + 104px)) !important;
   }
 }
+
+/* ===== v16 playback/preload fixes =====
+   - Hide custom middle play button.
+   - Leave only TikTok official bottom controls.
+   - Expand tap/swipe surface while preserving the bottom official control area.
+*/
+#peipe-video-app .pv-cover-play {
+  display: none !important;
+}
+#peipe-video-app .pv-cover-text {
+  margin-top: 0 !important;
+}
+#peipe-video-app .pv-slide-item.is-video .pv-tap-zone {
+  right: 96px !important;
+  bottom: max(88px, calc(var(--pv-bottom-safe) + 82px)) !important;
+  touch-action: pan-y !important;
+}
+#peipe-video-app .pv-tiktok-frame {
+  pointer-events: auto !important;
+}
+#peipe-video-app .pv-slide-item.is-video .pv-cover-fallback {
+  pointer-events: none !important;
+}
