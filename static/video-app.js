@@ -1,7 +1,7 @@
-/* Peipe /video mobile discover page v12
-   - 官方 TikTok 控件区域不跳转下载页（拦截层 + 底部官方控件通道）
+/* Peipe /video mobile discover page v13
+   - 官方 TikTok 控件：底部左侧播放/声音区域只开放 1 秒，之后重新拦截
    - 用户名/屏幕点击不跳转，仅头像跳转
-   - 当前视频静音自动播放；声音由官方音量按钮控制
+   - 当前视频静音自动播放；声音由官方音量按钮控制，避免重试播放反复静音
    - 当前 + 下一个视频 iframe 预载，封面预载 6 个
    - 评论区根据内容自适应高度，输入框无背景
    - 点赞接口 PUT/DELETE /api/v3/posts/{pid}/vote
@@ -10,8 +10,8 @@
 (function () {
   'use strict';
 
-  if (window.__peipeVideoDiscoverV12) return;
-  window.__peipeVideoDiscoverV12 = true;
+  if (window.__peipeVideoDiscoverV13) return;
+  window.__peipeVideoDiscoverV13 = true;
 
   var CONFIG = Object.assign({
     cid: 6,
@@ -26,8 +26,10 @@
     coverCacheMs: 7 * 24 * 60 * 60 * 1000,
     translateCacheMs: 3 * 24 * 60 * 60 * 1000,
     doubleTapMs: 280,
-    // 底部留给 TikTok 官方控件的高度（px），与 CSS .pv-tap-zone bottom 保持一致
-    officialBottomReserve: 64,
+    // 底部 TikTok 官方控件区域：左下角播放/声音按钮短暂透传，其它区域持续拦截
+    officialBottomReserve: 72,
+    officialControlLeftWidth: 176,
+    officialControlsExposeMs: 1000,
     swiperCdnJs: '/plugins/nodebb-plugin-peipe-video/static/lib/swiper-bundle.min.js',
     swiperCdnCss: '/plugins/nodebb-plugin-peipe-video/static/lib/swiper-bundle.min.css'
   }, window.PEIPE_VIDEO_CONFIG || {});
@@ -104,6 +106,7 @@
     viewer: { images: [], index: 0, swiper: null, startX: 0, startY: 0, down: false },
     imageSwipers: new Map(),
     coverPreloadSet: new Set(),
+    officialControlTimer: 0,
     comments: {
       item: null, posts: [], loading: false, replyTo: null,
       dragY: 0, dragStartY: 0, dragging: false, dragCandidate: false, dragStartTopZone: false,
@@ -374,8 +377,12 @@
         '<div class="pv-media">' + mediaHtml + '</div>' +
         (hasVideo ? '<div class="pv-cover"><img alt="cover"></div>' : '') +
 
-        // 拦截层（仅视频帖）：阻止官方 iframe 区域的点击触发跳转
-        (hasVideo ? '<div class="pv-iframe-shield" data-index="' + index + '"></div>' : '') +
+        // 拦截层（仅视频帖）：只在左下角官方播放/声音按钮区域短暂透传，其它位置拦截
+        (hasVideo ? '<div class="pv-iframe-shield" data-index="' + index + '">' +
+          '<div class="pv-shield-main" data-index="' + index + '"></div>' +
+          '<div class="pv-shield-bottom-right" data-index="' + index + '"></div>' +
+          '<div class="pv-shield-bottom-left" data-index="' + index + '"></div>' +
+        '</div>' : '') +
 
         '<div class="pv-gradient"></div>' +
 
@@ -522,7 +529,7 @@
     iframe.referrerPolicy = 'strict-origin-when-cross-origin';
     iframe.title = 'TikTok Player';
     shell.appendChild(iframe);
-    player = { key: key, index: index, item: item, videoId: tk.videoId, iframe: iframe, ready: false, wantPlay: false, muted: true, status: 'paused' };
+    player = { key: key, index: index, item: item, videoId: tk.videoId, iframe: iframe, ready: false, wantPlay: false, muted: true, mutedForAutoplay: false, status: 'paused' };
     state.players.set(key, player);
     fetchCover(tk.videoId, tk.url).then(function (url) {
       if (!url) return;
@@ -548,6 +555,38 @@
       if (it && it.tiktoks && it.tiktoks[0]) { prepareSlide(i, false); found += 1; }
     }
   }
+  function syncOfficialControlVars() {
+    if (!state.root) return;
+    state.root.style.setProperty('--pv-official-bottom-reserve', Math.max(48, Number(CONFIG.officialBottomReserve || 72)) + 'px');
+    state.root.style.setProperty('--pv-official-left-pass', Math.max(120, Number(CONFIG.officialControlLeftWidth || 176)) + 'px');
+  }
+  function closeOfficialControlWindow(index) {
+    var slide = findSlide(index);
+    if (slide) slide.classList.remove('is-official-window');
+  }
+  function openOfficialControlWindow(index) {
+    var item = state.list[index];
+    if (!item || !(item.tiktoks && item.tiktoks[0])) return;
+    $$('.pv-slide-item.is-official-window', state.root).forEach(function (slide) {
+      if (Number(slide.dataset.index || -1) !== index) slide.classList.remove('is-official-window');
+    });
+    var slide = findSlide(index);
+    if (!slide) return;
+    slide.classList.add('is-official-window');
+    clearTimeout(state.officialControlTimer);
+    var ms = Math.max(0, Number(CONFIG.officialControlsExposeMs || 1000));
+    if (ms) {
+      state.officialControlTimer = setTimeout(function () {
+        closeOfficialControlWindow(index);
+      }, ms);
+    }
+  }
+  function muteForAutoplayOnce(player) {
+    if (!player || !player.iframe || player.mutedForAutoplay) return;
+    sendToPlayer(player.iframe, 'mute');
+    player.mutedForAutoplay = true;
+  }
+
   function activateCurrent() {
     state.index = state.swiper ? state.swiper.activeIndex : state.index;
 
@@ -560,6 +599,7 @@
     preloadNextVideos(state.index);
     preloadCovers(state.index);
     playSlide(state.index, false);
+    openOfficialControlWindow(state.index);
     prunePlayers();
   }
   function sendToPlayer(iframe, type, value) {
@@ -597,10 +637,11 @@
     var slide = findSlide(index);
     if (slide) slide.classList.add('is-loading');
     var delays = CONFIG.playRetryDelays || [0, 80, 220, 520, 1000, 1600];
+    openOfficialControlWindow(index);
     delays.forEach(function (delay) {
       setTimeout(function () {
         if (!player.wantPlay || player.index !== state.index) return;
-        sendToPlayer(player.iframe, 'mute');
+        muteForAutoplayOnce(player);
         sendToPlayer(player.iframe, 'play');
       }, Math.max(0, Number(delay) || 0));
     });
@@ -612,7 +653,7 @@
       hardStopPlayer(p);
     });
     var slide = findSlide(index);
-    if (slide) slide.classList.remove('is-playing', 'is-loading');
+    if (slide) slide.classList.remove('is-playing', 'is-loading', 'is-official-window');
   }
   function pauseOtherPlayers(currentKey) {
     state.players.forEach(function (p, key) {
@@ -625,7 +666,7 @@
         if (farAway) destroyPlayer(p, key);
       }
       var slide = findSlide(p.index);
-      if (slide) slide.classList.remove('is-playing', 'is-loading');
+      if (slide) slide.classList.remove('is-playing', 'is-loading', 'is-official-window');
     });
   }
   function prunePlayers() {
@@ -654,7 +695,7 @@
       if (!player.iframe || player.iframe.contentWindow !== event.source) return;
       if (data.type === 'onPlayerReady') {
         player.ready = true;
-        if (player.wantPlay) { sendToPlayer(player.iframe, 'mute'); sendToPlayer(player.iframe, 'play'); }
+        if (player.wantPlay) { muteForAutoplayOnce(player); sendToPlayer(player.iframe, 'play'); }
         return;
       }
       if (data.type === 'onStateChange') {
@@ -728,18 +769,7 @@
   function isInOfficialBottomZone(e, slide) {
     if (!slide) return false;
     var rect = slide.getBoundingClientRect();
-    return (rect.bottom - e.clientY) <= CONFIG.officialBottomReserve;
-  }
-
-  function handleShieldClick(e, index) {
-    var slide = findSlide(index);
-    // 不在底部官方控件区域：处理为我们自己的播放/暂停 + 双击点赞
-    if (!isInOfficialBottomZone(e, slide)) {
-      handleTap(e, index);
-    }
-    // 在底部官方控件区域：什么都不做，让事件不冒泡，避免触发其它跳转。
-    // 但 shield 本身在 iframe 上方，无法把点击穿透到 iframe；
-    // 所以底部 64px 由 CSS 的 pointer-events 控制 —— shield 自身在底部使用 events: none。
+    return (rect.bottom - e.clientY) <= Math.max(48, Number(CONFIG.officialBottomReserve || 72));
   }
 
   /* ======================
@@ -1746,16 +1776,16 @@
     // 头像（仅这里跳转个人主页）—— 不拦截 a 标签默认行为
     if (e.target.closest('.pv-avatar-link')) return;
 
-    // 拦截层：点击在底部官方控件区域不做任何事；其它区域走双击/单击处理
+    // 拦截层：只有 is-official-window 期间的左下角会穿透到 iframe；其它点击全部留在本页
     if ((btn = e.target.closest('.pv-iframe-shield'))) {
-      var slide = findSlide(Number(btn.dataset.index));
+      var shieldIndex = Number(btn.dataset.index || (e.target.dataset && e.target.dataset.index) || -1);
+      var slide = findSlide(shieldIndex);
+      e.preventDefault(); e.stopPropagation();
       if (isInOfficialBottomZone(e, slide)) {
-        // 在官方控件区，啥也不做，让 iframe 自己处理它内部的点击（shield 已设 pointer-events: none 不会触发）
+        // 1 秒透传窗口关闭后，底部区域点击被吃掉，避免跳转下载页。
         return;
       }
-      // 否则：相当于点击 pv-tap-zone
-      e.preventDefault(); e.stopPropagation();
-      handleTap(e, Number(btn.dataset.index));
+      handleTap(e, shieldIndex);
       return;
     }
 
@@ -1876,6 +1906,7 @@
     state.root = document.getElementById('peipe-video-app');
     if (!state.root) return;
     document.body.classList.add('pv-video-mode');
+    syncOfficialControlVars();
     addPreconnects();
     buildChrome();
     showComposeFabInitial();
