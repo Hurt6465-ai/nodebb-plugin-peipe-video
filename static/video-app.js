@@ -16,7 +16,8 @@
     preloadAhead: 5,
     preloadVideoAhead: 2,
     keepWarmVideoAhead: 2,
-    coverCacheEndpoint: '/api/v3/plugins/peipe-video/cover-cache',
+    keepWarmVideoBehind: 1,
+    coverCacheEndpoint: '/api/v3/plugins/peipe-video/cover',
     imageMax: 4,
     coverCacheMs: 7 * 24 * 60 * 60 * 1000,
     translateCacheMs: 3 * 24 * 60 * 60 * 1000,
@@ -24,6 +25,11 @@
     swiperCdnJs: '/plugins/nodebb-plugin-peipe-video/static/lib/swiper-bundle.min.js',
     swiperCdnCss: '/plugins/nodebb-plugin-peipe-video/static/lib/swiper-bundle.min.css'
   }, window.PEIPE_VIDEO_CONFIG || {});
+
+  // Accept both names. video.tpl uses coverCacheApi; older JS used coverCacheEndpoint.
+  if (CONFIG.coverCacheApi) CONFIG.coverCacheEndpoint = CONFIG.coverCacheApi;
+  CONFIG.keepWarmVideoAhead = Math.max(1, Number(CONFIG.keepWarmVideoAhead || CONFIG.preloadVideoAhead || 2));
+  CONFIG.keepWarmVideoBehind = Math.max(0, Number(CONFIG.keepWarmVideoBehind || 1));
 
   var TEXT = {
     loading: '发现加载中...',
@@ -302,7 +308,7 @@
       passiveListeners: false,
       virtual: {
         enabled: true,
-        addSlidesBefore: 1,
+        addSlidesBefore: 2,
         addSlidesAfter: Math.max(5, CONFIG.preloadAhead + 2),
         slides: state.list.map(renderSlideHtml)
       },
@@ -323,7 +329,7 @@
           state.index = targetIndex;
           primeSlideForPlayback(targetIndex);
           warmVideoWindow(targetIndex);
-          if (previousIndex !== targetIndex) pauseSlide(previousIndex, true);
+          if (previousIndex !== targetIndex) pauseSlide(previousIndex, false);
         },
         slideChange: function (swiper) {
           state.index = swiper.activeIndex || 0;
@@ -468,15 +474,17 @@
   }
   function findSlide(index) { return $('.pv-slide-item[data-index="' + index + '"]', state.root); }
 
-  function buildPlayerUrl(videoId, autoplay) {
+  function buildPlayerUrl(videoId, opts) {
+    opts = opts || {};
+    if (typeof opts === 'boolean') opts = { autoplay: opts };
     var params = new URLSearchParams({
-      autoplay: autoplay ? '1' : '0',
-      muted: '0',
+      autoplay: opts.autoplay === false ? '0' : '1',
+      muted: opts.muted ? '1' : '0',
       loop: '1',
       rel: '0',
       controls: '1',
       progress_bar: '1',
-      play_button: '1',
+      play_button: '0',
       volume_control: '1',
       fullscreen_button: '0',
       timestamp: '0',
@@ -488,10 +496,17 @@
     });
     return 'https://www.tiktok.com/player/v1/' + encodeURIComponent(videoId) + '?' + params.toString();
   }
-  function playerKey(index, videoId) { return index + ':' + videoId; }
+  function playerKey(index, videoId) {
+    var item = state.list[index] || {};
+    return 'pv:' + String(item.tid || item.pid || index) + ':' + String(videoId || '');
+  }
   function isWarmIndex(index) {
-    var ahead = Math.max(1, CONFIG.preloadVideoAhead || 2);
-    return index === state.index || (index > state.index && index <= state.index + ahead);
+    var ahead = Math.max(1, Number(CONFIG.keepWarmVideoAhead || CONFIG.preloadVideoAhead || 2));
+    var behind = Math.max(0, Number(CONFIG.keepWarmVideoBehind || 1));
+    return index >= state.index - behind && index <= state.index + ahead;
+  }
+  function isCurrentPlayer(player) {
+    return !!player && player.index === state.index;
   }
   function ensureTikTokPlayer(index, autoplay) {
     var item = state.list[index];
@@ -501,22 +516,44 @@
     var key = playerKey(index, tk.videoId);
     var player = state.players.get(key);
     if (player && player.iframe && player.iframe.parentNode && player.iframe.src !== 'about:blank') {
-      if (autoplay && !playerHasAutoplay(player)) forcePlayerAutoplay(player);
+      player.index = index;
+      player.item = item;
+      if (index === state.index) {
+        try { player.iframe.loading = 'eager'; player.iframe.fetchPriority = 'high'; } catch (e) {}
+      }
       return player;
     }
     var shell = $('.pv-video-shell', slide);
     if (!shell) return null;
     shell.innerHTML = '';
     var iframe = document.createElement('iframe');
+    var isCurrent = index === state.index;
     iframe.className = 'pv-tiktok-frame';
-    iframe.src = buildPlayerUrl(tk.videoId, !!autoplay);
+    // Always create as autoplay=1. Warm slides are muted, which lets mobile browsers preload more reliably.
+    // Do not later change iframe.src just to switch autoplay; that discards the preload.
+    iframe.src = buildPlayerUrl(tk.videoId, {
+      autoplay: true,
+      muted: !isCurrent || !(state.soundUnlocked || autoplay)
+    });
     iframe.allow = 'autoplay; fullscreen; encrypted-media; picture-in-picture';
-    iframe.loading = index === state.index ? 'eager' : 'lazy';
-    iframe.fetchPriority = index === state.index ? 'high' : 'low';
+    iframe.loading = 'eager';
+    iframe.fetchPriority = isCurrent ? 'high' : 'low';
     iframe.referrerPolicy = 'strict-origin-when-cross-origin';
     iframe.title = 'TikTok Player';
     shell.appendChild(iframe);
-    player = { key: key, index: index, item: item, videoId: tk.videoId, iframe: iframe, ready: false, wantPlay: false, status: 'paused' };
+    player = {
+      key: key,
+      index: index,
+      item: item,
+      videoId: tk.videoId,
+      iframe: iframe,
+      ready: false,
+      wantPlay: false,
+      status: 'loading',
+      playSeq: 0,
+      prewarmStarted: false,
+      pauseRetryTimer: 0
+    };
     state.players.set(key, player);
     var cachedCover = getCachedCoverUrl(item);
     if (cachedCover) {
@@ -534,38 +571,67 @@
     if (!item || !(item.tiktoks && item.tiktoks[0])) return null;
     return ensureTikTokPlayer(index, !!autoplay);
   }
-  function playerHasAutoplay(player) {
-    return !!(player && player.iframe && /[?&]autoplay=1(?:&|$)/.test(player.iframe.src || ''));
+  function tryPlayPlayer(player, unmute) {
+    if (!player || !player.iframe || player.iframe.src === 'about:blank') return;
+    if (unmute) sendToPlayer(player.iframe, 'unMute');
+    else sendToPlayer(player.iframe, 'mute');
+    sendToPlayer(player.iframe, 'play');
+  }
+  function schedulePrewarm(player) {
+    if (!player || !player.iframe || isCurrentPlayer(player)) return;
+    player.prewarmWanted = true;
+    if (!player.ready) return;
+    if (player.prewarmStarted) return;
+    player.prewarmStarted = true;
+    tryPlayPlayer(player, false);
+    setTimeout(function () {
+      if (!player || !player.iframe || isCurrentPlayer(player) || player.wantPlay) return;
+      sendToPlayer(player.iframe, 'mute');
+      sendToPlayer(player.iframe, 'pause');
+      player.status = 'paused';
+    }, 650);
   }
   function forcePlayerAutoplay(player) {
+    // Kept for backward calls, but intentionally does not change iframe.src.
+    // Reassigning src was the main reason preloaded TikTok iframes showed loading again.
     if (!player || !player.iframe) return null;
-    if (playerHasAutoplay(player)) return player;
-    player.ready = false;
-    player.status = 'loading';
     player.wantPlay = true;
-    try {
-      player.iframe.loading = 'eager';
-      player.iframe.fetchPriority = 'high';
-      player.iframe.src = buildPlayerUrl(player.videoId, true);
-    } catch (e) {}
+    try { player.iframe.loading = 'eager'; player.iframe.fetchPriority = 'high'; } catch (e) {}
+    tryPlayPlayer(player, !!state.soundUnlocked);
     return player;
   }
   function primeSlideForPlayback(index) {
     var player = ensureTikTokPlayer(index, true);
-    if (player) forcePlayerAutoplay(player);
+    if (!player) return null;
+    player.wantPlay = true;
+    tryPlayPlayer(player, !!state.soundUnlocked);
     return player;
   }
 
   function warmVideoWindow(fromIndex) {
     if (fromIndex < 0 || fromIndex >= state.list.length) return;
-    if (state.hasInteracted || state.soundUnlocked) primeSlideForPlayback(fromIndex);
-    else prepareSlide(fromIndex, false);
+    ensureTikTokPlayer(fromIndex, fromIndex === state.index);
+
+    var behind = Math.max(0, Number(CONFIG.keepWarmVideoBehind || 1));
+    for (var b = fromIndex - 1; b >= Math.max(0, fromIndex - behind); b -= 1) {
+      var prev = state.list[b];
+      if (prev && prev.tiktoks && prev.tiktoks[0]) {
+        var prevPlayer = ensureTikTokPlayer(b, false);
+        if (prevPlayer) {
+          sendToPlayer(prevPlayer.iframe, 'mute');
+          sendToPlayer(prevPlayer.iframe, 'pause');
+        }
+      }
+    }
+
     var warmed = 0;
+    var maxAhead = Math.max(1, Number(CONFIG.keepWarmVideoAhead || CONFIG.preloadVideoAhead || 2));
     var maxScan = Math.min(state.list.length - 1, fromIndex + Math.max(8, CONFIG.preloadAhead + 4));
-    for (var i = fromIndex + 1; i <= maxScan && warmed < (CONFIG.preloadVideoAhead || 2); i += 1) {
+    for (var i = fromIndex + 1; i <= maxScan && warmed < maxAhead; i += 1) {
       var item = state.list[i];
       if (item && item.tiktoks && item.tiktoks[0]) {
-        ensureTikTokPlayer(i, false);
+        var p = ensureTikTokPlayer(i, false);
+        schedulePrewarm(p);
         warmed += 1;
       }
     }
@@ -593,7 +659,7 @@
       state.players.delete(player.key);
     };
     if (force) stop();
-    else setTimeout(stop, 140);
+    else setTimeout(stop, 650);
   }
   function playSlide(index, userGesture) {
     var item = state.list[index];
@@ -601,39 +667,46 @@
     var videoId = item.tiktoks[0].videoId;
     var key = playerKey(index, videoId);
     if (state.manualPausedKey === key && !userGesture) return;
-    var player = ensureTikTokPlayer(index, !!(userGesture || state.soundUnlocked));
+    if (userGesture) {
+      state.hasInteracted = true;
+      state.soundUnlocked = true;
+      safeJsonSet('pv-sound-unlocked', true);
+    }
+    var player = ensureTikTokPlayer(index, true);
     if (!player || !player.iframe) return;
     state.manualPausedKey = '';
     player.wantPlay = true;
     player.playSeq = (player.playSeq || 0) + 1;
     var seq = player.playSeq;
-    if (userGesture || state.soundUnlocked) forcePlayerAutoplay(player);
     pauseOtherPlayers(player.key);
     var slide = findSlide(index);
     if (slide) slide.classList.add('is-loading');
-    if (userGesture) { state.hasInteracted = true; state.soundUnlocked = true; safeJsonSet('pv-sound-unlocked', true); }
-    function stillWantsPlay() { return player.wantPlay && player.playSeq === seq && state.manualPausedKey !== player.key; }
-    function nudge() {
-      if (!stillWantsPlay()) return;
-      sendToPlayer(player.iframe, 'unMute');
-      sendToPlayer(player.iframe, 'play');
+
+    function stillWantsPlay() {
+      return player.wantPlay && player.playSeq === seq && state.manualPausedKey !== player.key && player.index === state.index;
     }
-    nudge();
-    setTimeout(nudge, 120);
-    setTimeout(nudge, 360);
-    setTimeout(nudge, 900);
-    setTimeout(nudge, 1500);
+    function requestPlay() {
+      if (!stillWantsPlay() || player.status === 'playing') return;
+      tryPlayPlayer(player, !!state.soundUnlocked);
+    }
+    requestPlay();
+    setTimeout(requestPlay, 420);
+    setTimeout(requestPlay, 1200);
     setTimeout(function () { if (stillWantsPlay() && player.status !== 'playing') markSlidePlaying(index); }, 1900);
+    warmVideoWindow(index);
   }
   function pauseSlide(index, force, manual) {
     state.players.forEach(function (p) {
       if (p.index !== index) return;
-      p.wantPlay = false; p.status = 'paused'; p.playSeq = (p.playSeq || 0) + 1;
+      p.wantPlay = false;
+      p.status = 'paused';
+      p.playSeq = (p.playSeq || 0) + 1;
       if (manual) state.manualPausedKey = p.key;
+      if (p.pauseRetryTimer) { clearTimeout(p.pauseRetryTimer); p.pauseRetryTimer = 0; }
       if (p.iframe) {
+        sendToPlayer(p.iframe, 'mute');
         sendToPlayer(p.iframe, 'pause');
-        setTimeout(function () { sendToPlayer(p.iframe, 'pause'); }, 60);
-        setTimeout(function () { sendToPlayer(p.iframe, 'pause'); }, 180);
+        setTimeout(function () { sendToPlayer(p.iframe, 'pause'); }, 80);
       }
       if (force || (!manual && !isWarmIndex(p.index))) hardStopPlayer(p, !!force);
     });
@@ -643,21 +716,28 @@
   function pauseOtherPlayers(currentKey) {
     state.players.forEach(function (p, key) {
       if (key === currentKey) return;
-      var shouldHardStop = p.index < state.index || !isWarmIndex(p.index) || Math.abs(p.index - state.index) > CONFIG.preloadAhead;
-      p.wantPlay = false; p.status = 'paused'; p.playSeq = (p.playSeq || 0) + 1;
+      p.wantPlay = false;
+      p.playSeq = (p.playSeq || 0) + 1;
+      if (p.pauseRetryTimer) { clearTimeout(p.pauseRetryTimer); p.pauseRetryTimer = 0; }
+      var warm = isWarmIndex(p.index);
       if (p.iframe) {
-        sendToPlayer(p.iframe, 'pause');
-        setTimeout(function () { sendToPlayer(p.iframe, 'pause'); }, 60);
-        if (shouldHardStop) hardStopPlayer(p, p.index < state.index);
+        sendToPlayer(p.iframe, 'mute');
+        if (warm && p.index > state.index) {
+          schedulePrewarm(p);
+        } else {
+          sendToPlayer(p.iframe, 'pause');
+        }
       }
+      if (!warm || Math.abs(p.index - state.index) > CONFIG.preloadAhead) hardStopPlayer(p, true);
       var slide = findSlide(p.index);
       if (slide) slide.classList.remove('is-playing', 'is-loading');
     });
   }
   function prunePlayers() {
-    var keep = Math.max(CONFIG.preloadAhead + 1, (CONFIG.preloadVideoAhead || 2) + 2);
-    state.players.forEach(function (p, key) {
-      if (Math.abs(p.index - state.index) <= keep || isWarmIndex(p.index)) return;
+    var ahead = Math.max(1, Number(CONFIG.keepWarmVideoAhead || CONFIG.preloadVideoAhead || 2));
+    var behind = Math.max(0, Number(CONFIG.keepWarmVideoBehind || 1));
+    state.players.forEach(function (p) {
+      if (p.index >= state.index - behind && p.index <= state.index + ahead) return;
       hardStopPlayer(p, true);
     });
   }
@@ -668,11 +748,10 @@
       slide.classList.toggle('is-active', idx === state.index);
       if (idx !== state.index) slide.classList.remove('is-playing', 'is-loading');
     });
-    warmVideoWindow(state.index);
     var item = state.list[state.index];
     var currentKey = item && item.tiktoks && item.tiktoks[0] ? playerKey(state.index, item.tiktoks[0].videoId) : '';
-    pauseOtherPlayers(currentKey);
     if (currentKey !== state.manualPausedKey) playSlide(state.index, !!(state.hasInteracted || state.soundUnlocked));
+    else warmVideoWindow(state.index);
     prunePlayers();
   }
   function markSlidePlaying(index) {
@@ -694,18 +773,38 @@
       if (!player.iframe || player.iframe.contentWindow !== event.source) return;
       if (data.type === 'onPlayerReady') {
         player.ready = true;
-        if (player.wantPlay && state.manualPausedKey !== player.key) { sendToPlayer(player.iframe, 'unMute'); sendToPlayer(player.iframe, 'play'); }
+        if (player.index === state.index && player.wantPlay && state.manualPausedKey !== player.key) {
+          tryPlayPlayer(player, !!state.soundUnlocked);
+        } else if (isWarmIndex(player.index)) {
+          schedulePrewarm(player);
+        }
         return;
       }
       if (data.type === 'onStateChange') {
         var value = Number(data.value); var word = String(data.value || '').toLowerCase();
         if (value === 1 || word === 'playing') {
-          player.status = 'playing'; state.soundUnlocked = true; safeJsonSet('pv-sound-unlocked', true);
-          pauseOtherPlayers(player.key); markSlidePlaying(player.index);
+          player.status = 'playing';
+          if (player.index === state.index) {
+            if (state.hasInteracted || state.soundUnlocked) safeJsonSet('pv-sound-unlocked', true);
+            markSlidePlaying(player.index);
+          } else {
+            // Warm iframe may briefly play muted to pull the first segment. Never let it affect current slide.
+            if (!isWarmIndex(player.index)) sendToPlayer(player.iframe, 'pause');
+          }
         } else if (value === 2 || value === 0 || word === 'paused' || word === 'ended') {
-          player.status = 'paused'; var s = findSlide(player.index); if (s) s.classList.remove('is-playing', 'is-loading');
+          player.status = 'paused';
+          var s = findSlide(player.index);
+          if (s) s.classList.remove('is-loading');
+          if (player.index === state.index && player.wantPlay && state.manualPausedKey !== player.key) {
+            if (player.pauseRetryTimer) clearTimeout(player.pauseRetryTimer);
+            player.pauseRetryTimer = setTimeout(function () {
+              if (player.index === state.index && player.wantPlay && state.manualPausedKey !== player.key && player.status !== 'playing') {
+                tryPlayPlayer(player, !!state.soundUnlocked);
+              }
+            }, 520);
+          }
         } else if (value === 3 || word === 'buffering') {
-          var s2 = findSlide(player.index); if (s2 && player.wantPlay) s2.classList.add('is-loading');
+          var s2 = findSlide(player.index); if (s2 && player.index === state.index && player.wantPlay) s2.classList.add('is-loading');
         }
       }
     });
@@ -1132,6 +1231,16 @@
     if (!item || !(item.tiktoks && item.tiktoks[0])) return;
     clearTimeout(state.lastTap.timer);
     var player = Array.from(state.players.values()).find(function (p) { return p.index === index; });
+    if (state.justUnlockedSoundAt && Date.now() - state.justUnlockedSoundAt < 450) {
+      state.manualPausedKey = '';
+      if (player) {
+        player.wantPlay = true;
+        tryPlayPlayer(player, true);
+      } else {
+        playSlide(index, true);
+      }
+      return;
+    }
     if (player && (player.status === 'playing' || player.wantPlay) && state.manualPausedKey !== player.key) {
       pauseSlide(index, false, true);
     } else {
@@ -1143,9 +1252,20 @@
     }
   }
   function unlockSoundFromGesture() {
+    var wasUnlocked = !!state.soundUnlocked;
     state.hasInteracted = true;
     state.soundUnlocked = true;
     safeJsonSet('pv-sound-unlocked', true);
+    if (!wasUnlocked) {
+      state.justUnlockedSoundAt = Date.now();
+      var item = state.list[state.index];
+      var player = item && item.tiktoks && item.tiktoks[0] ? state.players.get(playerKey(state.index, item.tiktoks[0].videoId)) : null;
+      if (player) {
+        state.manualPausedKey = '';
+        player.wantPlay = true;
+        tryPlayPlayer(player, true);
+      }
+    }
   }
 
   function buildChrome() {
@@ -1296,7 +1416,9 @@
       '#peipe-video-app .pv-cover-play{position:relative!important;width:64px!important;height:64px!important;border-radius:999px!important;background:rgba(255,255,255,.18)!important;backdrop-filter:blur(8px)!important;display:flex!important;align-items:center!important;justify-content:center!important;font-size:28px!important;line-height:1!important;padding-left:4px!important;box-shadow:0 10px 34px rgba(0,0,0,.28)!important;}' +
       '#peipe-video-app .pv-cover-text{position:relative!important;margin-top:12px!important;font-size:13px!important;opacity:.86!important;letter-spacing:.08em!important;}' +
       '#peipe-video-app .pv-slide-item.is-video .pv-gradient{z-index:2!important;}' +
-      '#peipe-video-app .pv-slide-item.is-video .pv-tap-zone,#peipe-video-app .pv-slide-item.is-video .pv-toolbar,#peipe-video-app .pv-slide-item.is-video .pv-desc{z-index:3!important;}';
+      '#peipe-video-app .pv-slide-item.is-video .pv-tap-zone,#peipe-video-app .pv-slide-item.is-video .pv-toolbar,#peipe-video-app .pv-slide-item.is-video .pv-desc{z-index:3!important;}' +
+      '#peipe-video-app .pv-cover-play{display:none!important;}' +
+      '#peipe-video-app .pv-slide-item.is-video .pv-tap-zone{bottom:max(88px,calc(var(--pv-bottom-safe) + 82px))!important;touch-action:pan-y!important;}';
     document.head.appendChild(style);
   }
 
