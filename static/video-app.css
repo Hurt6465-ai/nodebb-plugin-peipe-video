@@ -1,1842 +1,1818 @@
-:root {
-  --pv-bottom-safe: env(safe-area-inset-bottom, 0px);
-  --pv-top-safe: env(safe-area-inset-top, 0px);
-  --pv-accent: #ff2442;
-  --pv-text-shadow: 0 1px 3px rgba(0, 0, 0, .64);
-}
-
-html:has(.pv-page-active),
-body:has(.pv-page-active) {
-  overscroll-behavior: none !important;
-  background: #000 !important;
-}
-
-body.pv-video-mode {
-  overflow: hidden !important;
-  background: #000 !important;
-}
-
-body.pv-video-mode #content,
-body.pv-video-mode .container,
-body.pv-video-mode .container-lg,
-body.pv-video-mode .container-md,
-body.pv-video-mode .container-sm,
-body.pv-video-mode .container-xl,
-body.pv-video-mode .container-xxl {
-  max-width: none !important;
-  width: 100% !important;
-  padding: 0 !important;
-  margin: 0 !important;
-}
-
-body.pv-video-mode .navbar,
-body.pv-video-mode [component="navbar"],
-body.pv-video-mode .breadcrumb,
-body.pv-video-mode footer,
-body.pv-video-mode [component="sidebar"] {
-  display: none !important;
-}
-
-#peipe-video-app.pv-root,
-.pv-page {
-  position: fixed;
-  inset: 0;
-  z-index: 1500;
-  width: 100vw !important;
-  max-width: none !important;
-  height: 100dvh;
-  left: 0 !important;
-  right: 0 !important;
-  transform: none !important;
-  box-shadow: none !important;
-  background: #000;
-  color: #fff;
-  overflow: hidden;
-  touch-action: none;
-  user-select: none;
-  -webkit-user-select: none;
-  -webkit-touch-callout: none;
-  -webkit-tap-highlight-color: transparent;
-  overscroll-behavior: none;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans Myanmar", "Myanmar Text", "Noto Sans SC", sans-serif;
-}
-
-#peipe-video-app.pv-root *:not(input):not(textarea):not(select) {
-  -webkit-user-select: none !important;
-  user-select: none !important;
-  -webkit-touch-callout: none !important;
-  -webkit-tap-highlight-color: transparent !important;
-}
-
-.pv-init-loading,
-.pv-empty-page {
-  position: absolute;
-  inset: 0;
-  z-index: 5;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: rgba(255,255,255,.82);
-  font-size: 15px;
-  font-weight: 800;
-  background: #000;
-}
-
-.pv-swiper,
-.pv-swiper .swiper-wrapper,
-.pv-swiper .swiper-slide {
-  width: 100%;
-  height: 100%;
-}
-
-.pv-swiper {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  background: #000;
-  touch-action: none !important;
-}
-
-.pv-slide-item {
-  position: relative;
-  width: 100vw !important;
-  height: 100dvh;
-  overflow: hidden;
-  background: #000;
-  contain: layout paint style;
-  touch-action: none !important;
-}
-
-.pv-slide-item.is-active { z-index: 2; }
-
-.pv-media {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #000;
-  overflow: hidden;
-}
-
-.pv-video-shell {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  background: #000;
-  --pv-crop-top: 16px;
-  --pv-crop-right: 64px;
-  --pv-crop-bottom: 0px;
-}
-
-.pv-tiktok-frame {
-  position: absolute;
-  top: calc(-1 * var(--pv-crop-top));
-  left: 0;
-  z-index: 1;
-  width: calc(100% + var(--pv-crop-right));
-  height: calc(100% + var(--pv-crop-top) + var(--pv-crop-bottom));
-  border: 0;
-  background: #000;
-  transform: translateZ(0);
-  pointer-events: auto !important;
-}
-
-.pv-cover {
-  position: absolute;
-  inset: 0;
-  z-index: 4 !important;
-  overflow: hidden;
-  opacity: 1;
-  pointer-events: none;
-  transition: opacity .14s ease;
-  background: radial-gradient(circle at 50% 42%, rgba(255,36,66,.30), transparent 0 30%, rgba(0,0,0,.20) 58%, #050505 100%), linear-gradient(135deg, #151515 0%, #050505 58%, #17080c 100%) !important;
-}
-
-.pv-cover.has-cover { background: #000 !important; }
-.pv-cover.is-hidden,
-.pv-slide-item.is-playing .pv-cover { opacity: 0 !important; }
-
-.pv-cover img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-  opacity: 0;
-  transition: opacity .16s ease;
-}
-.pv-cover.has-cover img { opacity: 1; }
-.pv-cover img[src=""],
-.pv-cover img:not([src]) { display: none !important; }
-
-.pv-cover-fallback {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  color: rgba(255,255,255,.88);
-}
-.pv-cover.has-cover .pv-cover-fallback { display: none; }
-.pv-cover-glow {
-  position: absolute;
-  width: 48vw;
-  height: 48vw;
-  max-width: 240px;
-  max-height: 240px;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(255,36,66,.28), rgba(255,255,255,.08) 34%, transparent 68%);
-  filter: blur(2px);
-  animation: pv-cover-glow 2.1s ease-in-out infinite alternate;
-}
-.pv-cover-play {
-  position: relative;
-  z-index: 1;
-  width: 58px;
-  height: 58px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding-left: 4px;
-  background: rgba(255,255,255,.13);
-  color: #fff;
-  font-size: 26px;
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-}
-.pv-cover-text {
-  position: relative;
-  z-index: 1;
-  font-size: 12px;
-  font-weight: 850;
-  color: rgba(255,255,255,.74);
-  letter-spacing: .08em;
-}
-@keyframes pv-cover-glow { to { transform: scale(1.12); opacity: .7; } }
-
-.pv-slide-item.is-loading .pv-cover:not(.is-hidden)::after {
-  content: '';
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 30px;
-  height: 30px;
-  margin: 54px 0 0 -15px;
-  border-radius: 50%;
-  border: 2px solid rgba(255,255,255,.25);
-  border-top-color: rgba(255,255,255,.9);
-  animation: pv-spin .8s linear infinite;
-}
-@keyframes pv-spin { to { transform: rotate(360deg); } }
-
-.pv-image-main,
-.pv-image-swiper,
-.pv-image-swiper .swiper-wrapper,
-.pv-image-swiper .swiper-slide,
-.pv-viewer-swiper,
-.pv-viewer-swiper .swiper-wrapper,
-.pv-viewer-swiper .swiper-slide {
-  position: relative;
-  width: 100% !important;
-  height: 100% !important;
-  background: #000;
-}
-
-.pv-image-main {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  touch-action: pan-y;
-}
-
-.pv-image-swiper-slide,
-.pv-viewer-swiper .swiper-slide {
-  display: flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  background: #000 !important;
-}
-
-.pv-image-main img,
-.pv-image-swiper-slide img,
-.pv-viewer-swiper img {
-  width: 100% !important;
-  height: 100% !important;
-  object-fit: contain !important;
-  background: #000 !important;
-  pointer-events: none;
-  user-select: none;
-  -webkit-user-drag: none;
-}
-
-.pv-image-pagination,
-.pv-viewer-pagination {
-  position: absolute !important;
-  left: 0 !important;
-  right: 0 !important;
-  bottom: max(92px, calc(var(--pv-bottom-safe) + 88px)) !important;
-  z-index: 9 !important;
-  display: flex !important;
-  justify-content: center !important;
-  gap: 6px !important;
-}
-.pv-image-pagination .swiper-pagination-bullet,
-.pv-viewer-pagination .swiper-pagination-bullet {
-  width: 18px !important;
-  height: 3px !important;
-  margin: 0 !important;
-  border-radius: 999px !important;
-  background: rgba(255,255,255,.58) !important;
-  opacity: 1 !important;
-}
-.pv-image-pagination .swiper-pagination-bullet-active,
-.pv-viewer-pagination .swiper-pagination-bullet-active {
-  width: 34px !important;
-  background: #fff !important;
-}
-
-.pv-gradient {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 5;
-  height: 46vh;
-  background: linear-gradient(180deg, rgba(0,0,0,0), rgba(0,0,0,.42) 58%, rgba(0,0,0,.75));
-  pointer-events: none;
-}
-
-.pv-tap-zone {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 96px !important;
-  bottom: max(216px, calc(var(--pv-bottom-safe) + 208px)) !important;
-  z-index: 8;
-  background: transparent;
-  touch-action: manipulation !important;
-}
-.pv-slide-item.is-image .pv-tap-zone { display: none !important; }
-
-.pv-toolbar {
-  position: absolute;
-  right: 10px !important;
-  bottom: max(184px, calc(var(--pv-bottom-safe) + 176px)) !important;
-  z-index: 12;
-  width: 42px !important;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 10px !important;
-  color: #fff;
-  text-shadow: none !important;
-  pointer-events: auto;
-}
-.pv-avatar-wrap,
-.pv-avatar {
-  width: 44px !important;
-  height: 44px !important;
-}
-.pv-avatar {
-  border-radius: 50%;
-  border: 2px solid rgba(255,255,255,.9) !important;
-  object-fit: cover;
-  background: linear-gradient(135deg, #2563eb, #ff2442);
-  box-shadow: 0 2px 10px rgba(0,0,0,.28) !important;
-}
-.pv-follow-plus {
-  position: absolute;
-  left: 50%;
-  bottom: -7px;
-  transform: translateX(-50%);
-  width: 18px !important;
-  height: 18px !important;
-  border-radius: 999px;
-  border: 0;
-  background: var(--pv-accent);
-  color: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 16px;
-  line-height: 18px;
-  font-weight: 900;
-}
-.pv-follow-plus.is-following { background: #fff; color: var(--pv-accent); font-size: 12px; }
-
-.pv-action {
-  width: 42px !important;
-  min-height: 44px !important;
-  border: 0;
-  padding: 0;
-  background: transparent !important;
-  color: rgba(255,255,255,.96) !important;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 1px !important;
-  font-weight: 750;
-  font-size: 10px !important;
-  line-height: 1.1;
-  text-shadow: none !important;
-  cursor: pointer;
-}
-.pv-action-icon {
-  width: 31px !important;
-  height: 31px !important;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0 !important;
-}
-.pv-action-icon svg {
-  width: 31px !important;
-  height: 31px !important;
-  fill: rgba(255,255,255,.96) !important;
-  stroke: none !important;
-  filter: none !important;
-}
-.pv-like:not(.is-active) .pv-heart-svg path {
-  fill: rgba(0,0,0,.08) !important;
-  stroke: rgba(255,255,255,.98) !important;
-  stroke-width: 3.2px !important;
-  paint-order: stroke fill !important;
-}
-.pv-like.is-active .pv-heart-svg path {
-  fill: #ff2d55 !important;
-  stroke: #ff2d55 !important;
-  stroke-width: 0 !important;
-}
-.pv-comment-svg path,
-.pv-comment-svg circle { fill: rgba(255,255,255,.96) !important; }
-.pv-action span:last-child {
-  font-size: 10px !important;
-  font-weight: 700 !important;
-  color: rgba(255,255,255,.92) !important;
-  text-shadow: 0 1px 2px rgba(0,0,0,.28) !important;
-}
-
-.pv-desc {
-  position: absolute;
-  left: 14px !important;
-  right: 82px !important;
-  bottom: max(126px, calc(var(--pv-bottom-safe) + 120px)) !important;
-  z-index: 11;
-  color: #fff;
-  text-align: left;
-  text-shadow: var(--pv-text-shadow);
-  pointer-events: none !important;
-}
-.pv-desc a,
-.pv-desc button,
-.pv-desc .pv-text-row { pointer-events: auto; }
-.pv-username {
-  display: block;
-  max-width: 100%;
-  margin-bottom: 5px !important;
-  color: #fff;
-  font-size: 15px !important;
-  line-height: 1.28 !important;
-  font-weight: 900 !important;
-  text-decoration: none !important;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-.pv-text-row {
-  display: block !important;
-  max-height: calc(2 * 1.62em) !important;
-  overflow: hidden !important;
-  font-size: 14px !important;
-  line-height: 1.62 !important;
-  font-weight: 600 !important;
-  white-space: pre-wrap !important;
-  word-break: break-word !important;
-  pointer-events: auto !important;
-}
-.pv-text-row.is-expanded {
-  max-height: 34vh !important;
-  overflow: auto !important;
-}
-.pv-text-main { white-space: pre-wrap; word-break: break-word; }
-.pv-translate-btn,
-.pv-comment-translate,
-.pv-comment-input-translate {
-  background: transparent !important;
-  box-shadow: none !important;
-  border: 0 !important;
-}
-.pv-translate-btn {
-  display: inline-flex !important;
-  margin-left: 6px !important;
-  padding: 0 !important;
-  position: relative !important;
-  top: 3px !important;
-  color: rgba(255,255,255,.88) !important;
-  font-size: 13px !important;
-  font-weight: 850 !important;
-  vertical-align: baseline !important;
-  text-shadow: none !important;
-}
-.pv-translate-btn i,
-.pv-comment-translate i,
-.pv-comment-input-translate i { font-size: 15px !important; line-height: 1 !important; }
-.pv-translated,
-.pv-comment-translated {
-  display: none;
-  margin-top: 5px;
-  font-size: 13px !important;
-  line-height: 1.62 !important;
-  color: rgba(255,255,255,.82);
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 18vh;
-  overflow: auto;
-}
-.pv-translated.is-show,
-.pv-comment-translated.is-show { display: block; }
-.pv-time,
-.pv-image-count,
-.pv-image-nav,
-.pv-viewer-count { display: none !important; }
-
-.pv-heart-burst {
-  position: fixed;
-  z-index: 1700;
-  width: 108px;
-  height: 108px;
-  transform: translate(-50%, -50%) scale(.3) rotate(-12deg);
-  pointer-events: none;
-  color: var(--pv-accent);
-  font-size: 96px;
-  text-shadow: 0 3px 18px rgba(0,0,0,.38);
-  animation: pv-heart-burst .72s cubic-bezier(.2,.85,.25,1) forwards;
-}
-@keyframes pv-heart-burst {
-  0% { opacity: 0; transform: translate(-50%, -50%) scale(.35) rotate(-18deg); }
-  22% { opacity: 1; transform: translate(-50%, -50%) scale(1.12) rotate(-8deg); }
-  55% { opacity: .95; transform: translate(-50%, -50%) scale(.98) rotate(-8deg); }
-  100% { opacity: 0; transform: translate(-50%, -90%) scale(.8) rotate(-8deg); }
-}
-
-.pv-compose-fab {
-  position: absolute;
-  right: 16px !important;
-  bottom: max(20px, calc(var(--pv-bottom-safe) + 16px)) !important;
-  z-index: 50;
-  width: 48px;
-  height: 48px;
-  border: 0;
-  border-radius: 999px;
-  background: var(--pv-accent);
-  color: #fff;
-  font-size: 30px;
-  line-height: 1;
-  font-weight: 800;
-  box-shadow: 0 10px 30px rgba(255,36,66,.28), 0 5px 18px rgba(0,0,0,.22);
-  transition: opacity .18s ease, transform .18s ease;
-}
-.pv-compose-fab.is-hidden { opacity: 0; transform: translateY(16px) scale(.88); pointer-events: none; }
-
-.pv-drawer-backdrop,
-.pv-modal-backdrop {
-  position: absolute;
-  inset: 0;
-  z-index: 70;
-  background: rgba(0,0,0,.22);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity .16s ease;
-}
-.pv-drawer-backdrop.is-open,
-.pv-modal-backdrop.is-open { opacity: 1; pointer-events: auto; }
-
-.pv-compose-panel,
-.pv-translate-panel,
-.pv-comments-panel {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 75;
-  border-radius: 24px 24px 0 0;
-  transform: translateY(110%);
-  transition: transform .22s cubic-bezier(.22,.61,.36,1);
-}
-.pv-compose-panel.is-open,
-.pv-comments-panel.is-open,
-.pv-translate-panel.is-open { transform: translateY(0); }
-
-.pv-compose-panel {
-  max-height: min(86dvh, 680px);
-  padding: 14px 14px max(14px, var(--pv-bottom-safe));
-  overflow: auto;
-  color: #fff;
-  background: linear-gradient(180deg, rgba(36,36,42,.72), rgba(18,18,22,.58)) !important;
-  border: 1px solid rgba(255,255,255,.14);
-  box-shadow: 0 -16px 50px rgba(0,0,0,.46);
-  backdrop-filter: blur(26px) saturate(1.35) !important;
-  -webkit-backdrop-filter: blur(26px) saturate(1.35) !important;
-}
-
-.pv-translate-panel {
-  max-height: min(84dvh, 680px) !important;
-  padding: 14px 14px max(14px, var(--pv-bottom-safe));
-  overflow: auto;
-  color: #101218 !important;
-  background: linear-gradient(180deg, rgba(255,255,255,.96), rgba(244,247,252,.92)) !important;
-  border: 1px solid rgba(255,255,255,.78);
-  box-shadow: 0 -16px 50px rgba(0,0,0,.24);
-  backdrop-filter: blur(22px) saturate(1.25) !important;
-  -webkit-backdrop-filter: blur(22px) saturate(1.25) !important;
-}
-
-.pv-comments-panel {
-  height: auto;
-  min-height: min(48dvh, 360px);
-  max-height: 88dvh !important;
-  padding: 8px 10px max(8px, var(--pv-bottom-safe)) !important;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  color: #111827 !important;
-  background: linear-gradient(180deg, rgba(255,255,255,.94), rgba(244,247,252,.84)) !important;
-  border: 1px solid rgba(255,255,255,.65);
-  box-shadow: 0 -18px 50px rgba(0,0,0,.25) !important;
-  backdrop-filter: blur(22px) saturate(1.25) !important;
-  -webkit-backdrop-filter: blur(22px) saturate(1.25) !important;
-  touch-action: none !important;
-}
-
-.pv-panel-grip {
-  flex: 0 0 auto;
-  width: 42px !important;
-  height: 5px !important;
-  border-radius: 999px !important;
-  background: rgba(17,24,39,.18) !important;
-  margin: 9px auto 5px !important;
-}
-.pv-panel-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
-  flex: 0 0 auto;
-}
-.pv-panel-title { font-size: 16px; font-weight: 950; }
-.pv-comments-panel .pv-panel-title,
-.pv-translate-panel .pv-panel-title { color: #111827; }
-.pv-close {
-  width: 32px;
-  height: 32px;
-  border-radius: 999px;
-  border: 0;
-  background: rgba(17,24,39,.08);
-  color: inherit;
-  font-size: 20px;
-}
-.pv-compose-panel .pv-close { background: rgba(255,255,255,.12); }
-
-.pv-compose-panel textarea,
-.pv-translate-panel input,
-.pv-translate-panel select,
-.pv-translate-panel textarea {
-  width: 100%;
-  box-sizing: border-box;
-  border: 0;
-  border-radius: 16px;
-  outline: none;
-  padding: 12px;
-  font-size: 15px;
-  user-select: text;
-  -webkit-user-select: text;
-}
-.pv-compose-panel textarea {
-  min-height: 132px;
-  resize: vertical;
-  line-height: 1.5;
-  background: rgba(255,255,255,.12);
-  color: #fff;
-}
-.pv-compose-panel textarea::placeholder { color: rgba(255,255,255,.62); }
-.pv-preview-images {
-  display: flex;
-  gap: 8px;
-  margin-top: 10px;
-  overflow-x: auto;
-}
-.pv-preview-images img {
-  width: 64px;
-  height: 64px;
-  border-radius: 12px;
-  object-fit: cover;
-  background: #111;
-  flex: 0 0 auto;
-}
-.pv-compose-tools,
-.pv-translate-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 10px;
-}
-.pv-tool,
-.pv-primary {
-  border: 0;
-  border-radius: 999px;
-  height: 40px;
-  padding: 0 14px;
-  font-weight: 850;
-}
-.pv-tool { background: rgba(255,255,255,.14); color: #fff; }
-.pv-compose-translate { display: inline-flex; align-items: center; gap: 6px; }
-.pv-primary { margin-left: auto; background: var(--pv-accent); color: #fff; }
-.pv-primary:disabled,
-.pv-tool:disabled { opacity: .55; }
-.pv-meta { margin-top: 8px; color: rgba(255,255,255,.62); font-size: 12px; font-weight: 750; }
-.pv-comments-panel .pv-meta { color: rgba(15,23,42,.55); }
-
-.pv-comments-list {
-  display: flex;
-  flex-direction: column;
-  gap: 13px;
-  min-height: 96px;
-  overflow: auto;
-  padding: 6px 2px 12px !important;
-  flex: 1 1 auto;
-  overscroll-behavior: contain !important;
-  -webkit-overflow-scrolling: touch !important;
-}
-.pv-comment {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 8px 4px !important;
-}
-.pv-comment img {
-  width: 34px !important;
-  height: 34px !important;
-  border-radius: 50%;
-  object-fit: cover;
-  background: rgba(15,23,42,.12);
-  flex: 0 0 auto;
-}
-.pv-comment-body { min-width: 0; flex: 1 1 auto; }
-.pv-comment-name { font-size: 12px; color: rgba(15,23,42,.55); font-weight: 800; }
-.pv-comment-text {
-  margin-top: 2px;
-  font-size: 14px;
-  line-height: 1.58;
-  color: #101218;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-.pv-comment-translated { color: rgba(15,23,42,.62); }
-.pv-comment-actions { display: flex; gap: 12px; margin-top: 4px; }
-.pv-comment-actions button {
-  border: 0;
-  background: transparent;
-  padding: 0;
-  color: rgba(15,23,42,.55);
-  font-size: 12px;
-  font-weight: 800;
-}
-.pv-reply-bar {
-  display: none;
-  align-items: center;
-  gap: 6px;
-  margin: 2px 0 8px;
-  color: rgba(15,23,42,.7);
-  font-size: 12px;
-  font-weight: 800;
-  flex: 0 0 auto;
-}
-.pv-reply-bar.is-open { display: flex; }
-.pv-reply-cancel {
-  margin-left: auto;
-  border: 0;
-  background: rgba(15,23,42,.08);
-  border-radius: 999px;
-  width: 24px;
-  height: 24px;
-}
-
-.pv-comment-send-row {
-  display: flex;
-  align-items: center;
-  gap: 8px !important;
-  min-height: 48px !important;
-  padding: 8px 2px max(8px, var(--pv-bottom-safe)) !important;
-  background: transparent !important;
-  border-top: 0 !important;
-  flex: 0 0 auto;
-}
-.pv-comment-input {
-  flex: 1 1 auto;
-  min-width: 0;
-  height: 42px !important;
-  border-radius: 999px !important;
-  border: 0 !important;
-  outline: none !important;
-  box-shadow: none !important;
-  background: rgba(17,24,39,.075) !important;
-  color: #111827 !important;
-  padding: 0 14px !important;
-  font-size: 15px !important;
-  user-select: text !important;
-  -webkit-user-select: text !important;
-}
-.pv-comment-input:focus { outline: none !important; box-shadow: none !important; }
-.pv-comment-input-translate,
-.pv-comment-action-btn {
-  flex: 0 0 42px !important;
-  width: 42px !important;
-  height: 42px !important;
-  min-width: 42px !important;
-  border-radius: 999px !important;
-  border: 0 !important;
-  background: rgba(17,24,39,.075) !important;
-  color: rgba(17,24,39,.78) !important;
-  box-shadow: none !important;
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  padding: 0 !important;
-}
-.pv-comment-action-btn.is-send { background: #ff2442 !important; color: #fff !important; }
-.pv-comment-action-btn.recording { color: #ff2442 !important; }
-.pv-stop-dot {
-  width: 13px;
-  height: 13px;
-  display: block;
-  border-radius: 4px;
-  background: currentColor;
-}
-
-.pv-comment-voice-preview {
-  display: none;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 0 8px;
-  flex: 0 0 auto;
-}
-.pv-comment-voice-preview.is-open { display: flex; }
-.pv-comment-voice-remove {
-  width: 26px;
-  height: 26px;
-  border: 0;
-  border-radius: 999px;
-  background: rgba(17,24,39,.1);
-  color: #111827;
-  font-weight: 900;
-}
-.pv-voice-card {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  max-width: min(220px, 72vw);
-  min-height: 36px;
-  border: 0;
-  border-radius: 18px !important;
-  padding: 6px 10px;
-  background: rgba(17,24,39,.08);
-  color: #111827;
-  font-weight: 800;
-  touch-action: manipulation;
-}
-.pv-voice-card.playing { background: rgba(255,36,66,.12); color: #ff2442; }
-.pv-voice-play {
-  width: 22px;
-  height: 22px;
-  border-radius: 999px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(255,255,255,.7);
-  font-size: 11px;
-}
-.pv-voice-wave { display: inline-flex; align-items: center; gap: 2px; height: 22px; }
-.pv-voice-wave i { width: 2px; border-radius: 999px; background: currentColor; opacity: .55; }
-.pv-voice-time { font-size: 12px; min-width: 36px; text-align: right; }
-
-.pv-comment-record-panel {
-  display: none;
-  align-items: center;
-  gap: 10px;
-  margin: 4px 0 8px;
-  padding: 10px 12px;
-  border-radius: 18px;
-  background: rgba(255,36,66,.10);
-  color: #ff2442;
-  font-weight: 800;
-}
-.pv-comment-record-panel.is-open { display: flex; }
-.pv-record-pulse {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: #ff2442;
-  box-shadow: 0 0 0 0 rgba(255,36,66,.42);
-  animation: pv-record-pulse 1s infinite;
-}
-@keyframes pv-record-pulse { 70% { box-shadow: 0 0 0 12px rgba(255,36,66,0); } 100% { box-shadow: 0 0 0 0 rgba(255,36,66,0); } }
-.pv-record-bars { display: inline-flex; align-items: center; gap: 3px; height: 24px; }
-.pv-record-bars i { width: 3px; border-radius: 999px; background: currentColor; animation: pv-record-bars .7s ease-in-out infinite alternate; }
-.pv-record-bars i:nth-child(1){height:8px}.pv-record-bars i:nth-child(2){height:15px;animation-delay:.08s}.pv-record-bars i:nth-child(3){height:22px;animation-delay:.16s}.pv-record-bars i:nth-child(4){height:13px;animation-delay:.24s}.pv-record-bars i:nth-child(5){height:18px;animation-delay:.32s}
-@keyframes pv-record-bars { to { transform: scaleY(.52); opacity: .7; } }
-.pv-record-tip { margin-left: auto; color: rgba(17,24,39,.55); font-size: 12px; }
-
-.pv-provider-tabs {
-  display: flex !important;
-  justify-content: center !important;
-  gap: 8px !important;
-  margin: 12px auto !important;
-}
-.pv-provider-tab {
-  border: 0 !important;
-  border-radius: 999px !important;
-  padding: 8px 18px !important;
-  background: rgba(17,24,39,.08) !important;
-  color: rgba(17,24,39,.72) !important;
-  font-weight: 850 !important;
-}
-.pv-provider-tab.is-active { background: #111827 !important; color: #fff !important; }
-.pv-lang-row {
-  display: grid !important;
-  grid-template-columns: 1fr auto 1fr !important;
-  gap: 8px !important;
-  align-items: end !important;
-}
-.pv-lang-row label,
-.pv-translate-panel label {
-  display: flex !important;
-  flex-direction: column !important;
-  gap: 6px !important;
-  margin-top: 10px;
-  font-size: 12px !important;
-  color: rgba(17,24,39,.68) !important;
-  font-weight: 800;
-}
-.pv-lang-row label { margin-top: 0 !important; }
-.pv-translate-panel input,
-.pv-translate-panel select,
-.pv-translate-panel textarea {
-  min-height: 44px !important;
-  border-radius: 14px !important;
-  background: rgba(17,24,39,.07) !important;
-  color: #111827 !important;
-  padding: 10px 12px !important;
-  outline: none !important;
-}
-.pv-lang-arrow { padding-bottom: 12px !important; color: rgba(17,24,39,.5) !important; }
-.pv-ai-settings { display: none; }
-.pv-translate-panel.is-ai .pv-ai-settings { display: block; }
-.pv-translate-actions .pv-primary { background: #111827; color: #fff; }
-
-.pv-viewer {
-  position: absolute;
-  inset: 0;
-  z-index: 90;
-  background: rgba(0,0,0,.96) !important;
-  display: none;
-  align-items: center;
-  justify-content: center;
-  touch-action: none;
-}
-.pv-viewer.is-open { display: flex; }
-.pv-viewer-close {
-  position: absolute !important;
-  top: max(12px, var(--pv-top-safe)) !important;
-  right: 14px !important;
-  z-index: 20 !important;
-  width: 36px !important;
-  height: 36px !important;
-  border: 0 !important;
-  border-radius: 999px !important;
-  background: rgba(255,255,255,.16) !important;
-  color: #fff !important;
-  font-size: 24px !important;
-  line-height: 34px !important;
-  backdrop-filter: blur(10px) !important;
-  -webkit-backdrop-filter: blur(10px) !important;
-}
-
-.pv-error {
-  position: absolute;
-  left: 16px;
-  right: 16px;
-  top: 50%;
-  transform: translateY(-50%);
-  z-index: 20;
-  color: rgba(255,255,255,.8);
-  text-align: center;
-  font-size: 14px;
-  line-height: 1.5;
-}
-
-@media (max-width: 380px) {
-  .pv-desc { bottom: max(116px, calc(var(--pv-bottom-safe) + 110px)) !important; right: 76px !important; }
-  .pv-toolbar { bottom: max(176px, calc(var(--pv-bottom-safe) + 168px)) !important; }
-  .pv-tap-zone { bottom: max(208px, calc(var(--pv-bottom-safe) + 200px)) !important; }
-  .pv-username { font-size: 14px !important; }
-  .pv-text-row { font-size: 13px !important; }
-}
-
-
-/* ===== Final override patch: keep after base CSS ===== */
-/* Peipe /video v7.1 append patch
-   用法：保留你现有那份原 CSS，不要删，把本文件内容追加到原 CSS 的最后。
-   目的：后端 coverUrl 缓存封面 + 前端渐变兜底、评论区自适应高度、评论输入框单层、浅色翻译面板、发布毛玻璃、发布输入翻译按钮。
+/* Peipe /video mobile discover page v7 SEA final - compressed images + dedup CSS + follow lower-left + playback watchdog
+   - Adds cost-effective image compression for compose images: 1080px / ~90KB target, WebP preferred
+   - HEIC/HEIF are converted when the browser can decode them; if conversion fails, upload is rejected
+   - GIF/SVG are rejected for compose image uploads to avoid large/unsafe originals
+   - Feed images use cover + centered crop to avoid black side bars; viewer still shows full image
+   - Follow button moved to avatar lower-left and follow API uses raw NodeBB v3 fetch
+   - Manual video pause shows a center play button
+   - Current TikTok iframe has a lightweight stuck/loading watchdog that soft-refreshes and retries playback
+   - TikTok playback/comment/translate behavior kept from v7
 */
+(function () {
+  'use strict';
 
-/* 1) TikTok 封面：优先展示后端缓存 coverUrl；没有封面也不黑屏，显示渐变兜底 */
-.pv-cover {
-  z-index: 4 !important;
-  opacity: 1 !important;
-  overflow: hidden !important;
-  background:
-    radial-gradient(circle at 26% 18%, rgba(255, 36, 66, .32), transparent 36%),
-    radial-gradient(circle at 76% 28%, rgba(37, 99, 235, .24), transparent 38%),
-    linear-gradient(145deg, #101015 0%, #050507 54%, #151116 100%) !important;
-  transition: opacity .14s ease !important;
-  pointer-events: none !important;
-}
+  if (window.__peipeVideoDiscoverV7) return;
+  window.__peipeVideoDiscoverV7 = true;
 
-.pv-cover.is-hidden,
-.pv-slide-item.is-playing .pv-cover {
-  opacity: 0 !important;
-}
-
-.pv-cover img {
-  position: absolute !important;
-  inset: 0 !important;
-  z-index: 2 !important;
-  width: 100% !important;
-  height: 100% !important;
-  object-fit: cover !important;
-  display: block !important;
-  opacity: 0 !important;
-  transition: opacity .16s ease !important;
-}
-
-.pv-cover.has-cover img,
-.pv-cover img[src]:not([src=""]) {
-  opacity: 1 !important;
-}
-
-.pv-cover img:not([src]),
-.pv-cover img[src=""] {
-  display: none !important;
-}
-
-.pv-cover-fallback {
-  position: absolute !important;
-  inset: 0 !important;
-  z-index: 1 !important;
-  display: flex !important;
-  flex-direction: column !important;
-  align-items: center !important;
-  justify-content: center !important;
-  gap: 10px !important;
-  color: rgba(255,255,255,.88) !important;
-  text-shadow: 0 2px 10px rgba(0,0,0,.36) !important;
-}
-
-.pv-cover.has-cover .pv-cover-fallback {
-  opacity: 0 !important;
-}
-
-.pv-cover-glow {
-  position: absolute !important;
-  width: 58vw !important;
-  height: 58vw !important;
-  max-width: 260px !important;
-  max-height: 260px !important;
-  border-radius: 999px !important;
-  background: radial-gradient(circle, rgba(255,255,255,.10), transparent 66%) !important;
-  filter: blur(2px) !important;
-}
-
-.pv-cover-play {
-  position: relative !important;
-  z-index: 2 !important;
-  width: 58px !important;
-  height: 58px !important;
-  border-radius: 999px !important;
-  display: flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  padding-left: 4px !important;
-  background: rgba(255,255,255,.16) !important;
-  border: 1px solid rgba(255,255,255,.22) !important;
-  backdrop-filter: blur(12px) !important;
-  -webkit-backdrop-filter: blur(12px) !important;
-  font-size: 24px !important;
-  line-height: 1 !important;
-}
-
-.pv-cover-text {
-  position: relative !important;
-  z-index: 2 !important;
-  font-size: 12px !important;
-  font-weight: 850 !important;
-  letter-spacing: .12em !important;
-  color: rgba(255,255,255,.72) !important;
-}
-
-.pv-slide-item.is-loading .pv-cover:not(.is-hidden)::after {
-  content: '' !important;
-  position: absolute !important;
-  left: 50% !important;
-  top: calc(50% + 54px) !important;
-  z-index: 3 !important;
-  width: 22px !important;
-  height: 22px !important;
-  margin: -11px 0 0 -11px !important;
-  border-radius: 50% !important;
-  border: 2px solid rgba(255,255,255,.24) !important;
-  border-top-color: rgba(255,255,255,.86) !important;
-  animation: pv-spin .8s linear infinite !important;
-}
-
-@keyframes pv-spin { to { transform: rotate(360deg); } }
-
-/* 2) 评论区：高度跟随内容，自适应；内容多时再滚动 */
-.pv-comments-panel {
-  height: auto !important;
-  min-height: 188px !important;
-  max-height: min(86dvh, 720px) !important;
-  padding: 7px 12px max(8px, var(--pv-bottom-safe)) !important;
-  border-radius: 24px 24px 0 0 !important;
-  background: linear-gradient(180deg, rgba(255,255,255,.94), rgba(246,248,252,.86)) !important;
-  color: #111827 !important;
-  box-shadow: 0 -18px 55px rgba(0,0,0,.24) !important;
-  backdrop-filter: blur(22px) saturate(1.25) !important;
-  -webkit-backdrop-filter: blur(22px) saturate(1.25) !important;
-  display: flex !important;
-  flex-direction: column !important;
-  overflow: hidden !important;
-  touch-action: none !important;
-}
-
-.pv-comments-list {
-  flex: 0 1 auto !important;
-  min-height: 0 !important;
-  max-height: calc(min(86dvh, 720px) - 142px) !important;
-  overflow-y: auto !important;
-  overscroll-behavior: contain !important;
-  -webkit-overflow-scrolling: touch !important;
-  padding: 6px 2px 10px !important;
-}
-
-.pv-empty-comments {
-  padding: 22px 0 !important;
-  text-align: center !important;
-}
-
-/* 3) 评论输入框：去掉白色长方形面板；只保留一层输入框 */
-.pv-comment-send-row {
-  min-height: 0 !important;
-  padding: 8px 0 max(7px, var(--pv-bottom-safe)) !important;
-  margin: 0 !important;
-  background: transparent !important;
-  border-top: 0 !important;
-  box-shadow: none !important;
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-  flex: 0 0 auto !important;
-}
-
-.pv-comment-input-wrap {
-  display: flex !important;
-  align-items: center !important;
-  width: 100% !important;
-  min-height: 44px !important;
-  border-radius: 22px !important;
-  background: rgba(17,24,39,.075) !important;
-  border: 0 !important;
-  box-shadow: none !important;
-  padding: 0 6px !important;
-}
-
-.pv-comment-input-wrap .pv-comment-input,
-.pv-comment-input {
-  flex: 1 1 auto !important;
-  min-width: 0 !important;
-  width: auto !important;
-  height: 42px !important;
-  border: 0 !important;
-  border-radius: 0 !important;
-  background: transparent !important;
-  box-shadow: none !important;
-  outline: none !important;
-  padding: 0 8px !important;
-  color: #111827 !important;
-  font-size: 15px !important;
-  -webkit-user-select: text !important;
-  user-select: text !important;
-}
-
-.pv-comment-input:focus {
-  border: 0 !important;
-  outline: 0 !important;
-  box-shadow: none !important;
-}
-
-.pv-comment-input-wrap .pv-comment-input-translate,
-.pv-comment-input-wrap .pv-comment-action-btn,
-.pv-comment-input-translate,
-.pv-comment-action-btn {
-  flex: 0 0 34px !important;
-  width: 34px !important;
-  height: 34px !important;
-  min-width: 34px !important;
-  border-radius: 999px !important;
-  border: 0 !important;
-  background: transparent !important;
-  color: rgba(17,24,39,.72) !important;
-  box-shadow: none !important;
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  padding: 0 !important;
-}
-
-.pv-comment-action-btn.is-send {
-  color: #ff2442 !important;
-}
-
-.pv-comment-action-btn.recording {
-  color: #ff2442 !important;
-}
-
-.pv-comment-input-wrap svg,
-.pv-comment-input-wrap i {
-  width: 19px !important;
-  height: 19px !important;
-  font-size: 17px !important;
-}
-
-/* 4) 翻译设置面板：浅色，不要黑色；点击遮罩关闭由 JS 处理 */
-.pv-translate-panel {
-  max-height: min(82dvh, 650px) !important;
-  border-radius: 24px 24px 0 0 !important;
-  background: linear-gradient(180deg, rgba(255,255,255,.97), rgba(246,248,252,.92)) !important;
-  color: #111827 !important;
-  box-shadow: 0 -18px 55px rgba(0,0,0,.22) !important;
-  backdrop-filter: blur(22px) saturate(1.18) !important;
-  -webkit-backdrop-filter: blur(22px) saturate(1.18) !important;
-}
-
-.pv-translate-panel .pv-panel-title,
-.pv-translate-panel label,
-.pv-translate-panel .pv-lang-row label,
-.pv-translate-panel .pv-lang-row label span {
-  color: #111827 !important;
-}
-
-.pv-translate-panel label,
-.pv-translate-panel .pv-lang-row label span {
-  font-size: 12px !important;
-  font-weight: 850 !important;
-  opacity: .78 !important;
-}
-
-.pv-translate-panel input,
-.pv-translate-panel select,
-.pv-translate-panel textarea {
-  width: 100% !important;
-  box-sizing: border-box !important;
-  border: 0 !important;
-  border-radius: 14px !important;
-  background: rgba(17,24,39,.075) !important;
-  color: #111827 !important;
-  padding: 10px 12px !important;
-  outline: none !important;
-  box-shadow: none !important;
-  -webkit-user-select: text !important;
-  user-select: text !important;
-}
-
-.pv-translate-panel select option {
-  color: #111827 !important;
-  background: #fff !important;
-}
-
-.pv-provider-tabs {
-  display: flex !important;
-  justify-content: center !important;
-  gap: 8px !important;
-  margin: 12px auto !important;
-}
-
-.pv-provider-tab {
-  border: 0 !important;
-  border-radius: 999px !important;
-  padding: 8px 18px !important;
-  background: rgba(17,24,39,.08) !important;
-  color: rgba(17,24,39,.72) !important;
-  font-weight: 850 !important;
-}
-
-.pv-provider-tab.is-active {
-  background: #111827 !important;
-  color: #fff !important;
-}
-
-.pv-lang-row {
-  display: grid !important;
-  grid-template-columns: 1fr auto 1fr !important;
-  gap: 8px !important;
-  align-items: end !important;
-}
-
-.pv-lang-arrow {
-  padding-bottom: 12px !important;
-  color: rgba(17,24,39,.55) !important;
-}
-
-.pv-translate-actions .pv-primary,
-.pv-translate-save {
-  background: #ff2442 !important;
-  color: #fff !important;
-}
-
-/* 5) 发布窗口：毛玻璃效果 + 发布输入翻译按钮样式 */
-.pv-compose-panel {
-  max-height: min(84dvh, 680px) !important;
-  border-radius: 24px 24px 0 0 !important;
-  background: linear-gradient(180deg, rgba(255,255,255,.18), rgba(255,255,255,.10)) !important;
-  color: #fff !important;
-  box-shadow: 0 -18px 60px rgba(0,0,0,.42) !important;
-  backdrop-filter: blur(24px) saturate(1.35) !important;
-  -webkit-backdrop-filter: blur(24px) saturate(1.35) !important;
-  border-top: 1px solid rgba(255,255,255,.18) !important;
-}
-
-.pv-compose-panel .pv-panel-title {
-  color: #fff !important;
-  text-shadow: 0 1px 2px rgba(0,0,0,.28) !important;
-}
-
-.pv-compose-panel .pv-close {
-  background: rgba(255,255,255,.16) !important;
-  color: #fff !important;
-}
-
-.pv-compose-panel textarea,
-.pv-compose-textarea {
-  min-height: 132px !important;
-  border-radius: 18px !important;
-  border: 1px solid rgba(255,255,255,.14) !important;
-  background: rgba(255,255,255,.14) !important;
-  color: #fff !important;
-  box-shadow: none !important;
-  outline: none !important;
-  resize: vertical !important;
-  -webkit-user-select: text !important;
-  user-select: text !important;
-}
-
-.pv-compose-panel textarea::placeholder,
-.pv-compose-textarea::placeholder {
-  color: rgba(255,255,255,.58) !important;
-}
-
-.pv-compose-tools {
-  display: flex !important;
-  align-items: center !important;
-  gap: 10px !important;
-  flex-wrap: wrap !important;
-}
-
-.pv-compose-panel .pv-tool,
-.pv-compose-panel .pv-compose-translate {
-  border: 0 !important;
-  border-radius: 999px !important;
-  background: rgba(255,255,255,.16) !important;
-  color: #fff !important;
-  height: 40px !important;
-  padding: 0 14px !important;
-  font-weight: 850 !important;
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  gap: 6px !important;
-}
-
-.pv-compose-panel .pv-compose-translate i {
-  font-size: 14px !important;
-}
-
-.pv-compose-panel .pv-primary,
-.pv-compose-submit {
-  margin-left: auto !important;
-  background: #ff2442 !important;
-  color: #fff !important;
-  border: 0 !important;
-}
-
-.pv-compose-panel .pv-meta {
-  color: rgba(255,255,255,.72) !important;
-}
-
-/* 6) 遮罩：点击空白处可以关闭，视觉更轻 */
-.pv-drawer-backdrop,
-.pv-modal-backdrop {
-  background: rgba(0,0,0,.28) !important;
-  backdrop-filter: blur(2px) !important;
-  -webkit-backdrop-filter: blur(2px) !important;
-}
-
-/* 7) 文案兜底：如果 JS 已隐藏“动态”和 vt 短链，这里再避免自动生成文本占位挤出 */
-.pv-text-row:empty,
-.pv-text-main:empty,
-.pv-translated:empty,
-.pv-comment-translated:empty {
-  display: none !important;
-}
-
-/* 8) 小屏安全位置微调 */
-@media (max-width: 380px) {
-  .pv-comments-panel {
-    max-height: min(88dvh, 720px) !important;
+  function deepMerge(target) {
+    target = target || {};
+    for (var i = 1; i < arguments.length; i += 1) {
+      var src = arguments[i] || {};
+      Object.keys(src).forEach(function (key) {
+        var val = src[key];
+        if (val && typeof val === 'object' && !Array.isArray(val) && !(val instanceof File) && !(val instanceof Blob)) {
+          target[key] = deepMerge({}, target[key] || {}, val);
+        } else if (val !== undefined) {
+          target[key] = val;
+        }
+      });
+    }
+    return target;
   }
-  .pv-comments-list {
-    max-height: calc(min(88dvh, 720px) - 138px) !important;
+
+  var CONFIG = deepMerge({
+    cid: 6,
+    pageSize: 12,
+    preloadAhead: 6,
+    preloadVideoAhead: 2,
+    keepWarmVideoAhead: 2,
+    keepWarmVideoBehind: 1,
+    enableSegmentPrewarm: true,
+    segmentPrewarmMs: 180,
+    playbackWatchdogMs: 5400,
+    coverCacheEndpoint: '/api/v3/plugins/peipe-video/cover',
+    imageMax: 4,
+    imageConfig: {
+      maxSide: 1080,
+      maxSizeMB: 0.09,
+      quality: 0.58,
+      minCompressBytes: 70 * 1024,
+      useWebp: true,
+      qualities: [0.58, 0.50, 0.44, 0.38, 0.32, 0.26, 0.22]
+    },
+    coverCacheMs: 7 * 24 * 60 * 60 * 1000,
+    translateCacheMs: 3 * 24 * 60 * 60 * 1000,
+    doubleTapMs: 280,
+    swiperCdnJs: '/plugins/nodebb-plugin-peipe-video/static/lib/swiper-bundle.min.js',
+    swiperCdnCss: '/plugins/nodebb-plugin-peipe-video/static/lib/swiper-bundle.min.css'
+  }, window.PEIPE_VIDEO_CONFIG || {});
+
+  // Accept both names. video.tpl uses coverCacheApi; older JS used coverCacheEndpoint.
+  if (CONFIG.coverCacheApi) CONFIG.coverCacheEndpoint = CONFIG.coverCacheApi;
+  CONFIG.keepWarmVideoAhead = Math.max(1, Number(CONFIG.keepWarmVideoAhead === undefined ? (CONFIG.preloadVideoAhead || 1) : CONFIG.keepWarmVideoAhead));
+  CONFIG.keepWarmVideoBehind = Math.max(0, Number(CONFIG.keepWarmVideoBehind === undefined ? 0 : CONFIG.keepWarmVideoBehind));
+  CONFIG.enableSegmentPrewarm = CONFIG.enableSegmentPrewarm === true || CONFIG.enableSegmentPrewarm === 'true';
+  CONFIG.segmentPrewarmMs = Math.max(120, Math.min(500, Number(CONFIG.segmentPrewarmMs || 220)));
+  CONFIG.playbackWatchdogMs = Math.max(2600, Math.min(9000, Number(CONFIG.playbackWatchdogMs || 5200)));
+
+  var TEXT = {
+    loading: '发现加载中...',
+    empty: '还没有可浏览的内容',
+    publish: '发布',
+    publishing: '发布中...',
+    publishOk: '发布成功',
+    publishFail: '发布失败',
+    placeholder: '写点什么，或粘贴 TikTok 链接',
+    chooseImage: '图片',
+    translateInput: '翻译输入',
+    send: '发布',
+    imageOnly: '请选择图片',
+    imageUnsupported: '不支持 GIF/SVG 原图上传，请换 JPG/PNG/WebP 图片',
+    imageConvertFail: '此图片格式浏览器无法转换，请换 JPG/PNG/WebP 图片',
+    imageCompressFail: '图片处理失败，请换一张图片',
+    uploadImage: '上传图片',
+    compressing: '压缩中...',
+    enterSomething: '请输入内容、TikTok 链接或图片',
+    comments: '评论',
+    commentPlaceholder: '说点什么...',
+    replyTo: '回复',
+    commentFail: '评论失败，可打开原帖评论',
+    openTopic: '打开原帖',
+    loginFirst: '请先登录',
+    followFail: '关注失败',
+    unfollowFail: '取消关注失败',
+    followed: '已关注',
+    unfollowed: '已取消关注',
+    likeFail: '点赞失败',
+    unlikeFail: '取消点赞失败',
+    translate: '翻译',
+    translating: '翻译中...',
+    translateFail: '翻译失败',
+    translateSettings: '翻译设置',
+    sourceLang: '源语言',
+    targetLang: '目标语言',
+    save: '保存',
+    auto: '自动',
+    voiceMsg: '语音消息',
+    noComments: '暂无评论',
+    google: '谷歌翻译',
+    ai: 'AI翻译',
+    aiEndpoint: 'AI 接口',
+    aiModel: '模型',
+    aiApiKey: '密钥',
+    aiPrompt: '提示词'
+  };
+
+  var RE = {
+    tiktokGlobal: /https?:\/\/(?:www\.)?tiktok\.com\/@[^\/\s<>'"]+\/video\/(\d+)(?:\?[^\s<>'"]*)?/ig,
+    tiktokOne: /https?:\/\/(?:www\.)?tiktok\.com\/@([^\/\s<>'"]+)\/video\/(\d+)/i,
+    tiktokToken: /(?:https?[-:\/]+)?(?:www[.-])?tiktok[.-]com[-\/\w@.%=&?]+/ig,
+    tiktokShort: /https?:\/\/(?:vt|vm)\.tiktok\.com\/[^\s<>'"]+/ig,
+    audioExt: /\.(m4a|mp3|wav|ogg|oga|webm|aac)(?:[?#].*)?$/i
+  };
+
+  var state = {
+    root: null,
+    swiper: null,
+    list: [],
+    feedPage: 1,
+    feedLoading: false,
+    feedDone: false,
+    index: 0,
+    players: new Map(),
+    imageIndex: new Map(),
+    imageSwipers: new Map(),
+    hasInteracted: false,
+    soundUnlocked: !!safeJsonGet('pv-sound-unlocked', false),
+    soundMuted: !!safeJsonGet('pv-sound-muted', !safeJsonGet('pv-sound-unlocked', false)),
+    lastTap: { time: 0, x: 0, y: 0, timer: 0 },
+    pointer: { down: false, x: 0, y: 0, moved: false, tapIndex: -1 },
+    manualPausedKey: '',
+    compose: { imageFiles: [], imageUrls: [] },
+    viewer: { images: [], index: 0, swiper: null, startX: 0, startY: 0, down: false },
+    comments: {
+      item: null,
+      posts: [],
+      replyTo: null,
+      dragY: 0,
+      dragStartY: 0,
+      dragging: false,
+      dragCandidate: false,
+      dragStartTopZone: false,
+      voiceBlob: null,
+      voiceUrl: '',
+      voiceDuration: 0,
+      mediaRecorder: null,
+      stream: null,
+      chunks: [],
+      startAt: 0,
+      timer: 0
+    },
+    translateLongPressTimer: 0
+  };
+
+  function $(sel, root) { return (root || document).querySelector(sel); }
+  function $$(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
+  function norm(v) { return String(v || '').replace(/\s+/g, ' ').trim(); }
+  function rel(path) {
+    var base = (window.config && window.config.relative_path) || '';
+    if (!path) return base || '';
+    if (/^https?:\/\//i.test(path)) return path;
+    if (base && path.indexOf(base + '/') === 0) return path;
+    return base + path;
   }
-  .pv-compose-panel,
-  .pv-translate-panel {
-    max-height: min(86dvh, 650px) !important;
+  function csrfToken() {
+    return (window.config && (window.config.csrf_token || window.config.csrfToken)) ||
+      ($('meta[name="csrf-token"]') && $('meta[name="csrf-token"]').getAttribute('content')) || '';
   }
-}
-
-/* Peipe video v8 final fixes: easier swipe, real single-tap pause, rounded inputs, adaptive comments */
-#peipe-video-app .pv-tap-zone {
-  right: 72px !important;
-  bottom: max(118px, calc(var(--pv-bottom-safe) + 112px)) !important;
-  z-index: 30 !important;
-  touch-action: none !important;
-}
-#peipe-video-app .pv-toolbar { z-index: 35 !important; }
-#peipe-video-app .pv-desc { z-index: 34 !important; }
-#peipe-video-app .pv-cover { z-index: 4 !important; }
-#peipe-video-app .pv-slide-item.is-playing .pv-cover,
-#peipe-video-app .pv-cover.is-hidden { opacity: 0 !important; pointer-events: none !important; }
-#peipe-video-app .pv-cover:not(.is-hidden) { opacity: 1 !important; }
-
-#peipe-video-app .pv-like:not(.is-active) .pv-heart-svg path {
-  fill: rgba(0,0,0,.08) !important;
-  stroke: rgba(255,255,255,.98) !important;
-  stroke-width: 3.2px !important;
-}
-#peipe-video-app .pv-like.is-active .pv-heart-svg path {
-  fill: #ff2d55 !important;
-  stroke: #ff2d55 !important;
-  stroke-width: 0 !important;
-}
-
-#peipe-video-app .pv-comments-panel {
-  height: auto !important;
-  min-height: 220px !important;
-  max-height: min(88dvh, 760px) !important;
-  border-radius: 24px 24px 0 0 !important;
-}
-#peipe-video-app .pv-comments-list {
-  flex: 1 1 auto !important;
-  min-height: 80px !important;
-  overflow-y: auto !important;
-  overscroll-behavior: contain !important;
-}
-#peipe-video-app .pv-comment-send-row {
-  padding: 8px 8px max(8px, var(--pv-bottom-safe)) !important;
-  background: transparent !important;
-  border-top: 0 !important;
-  box-shadow: none !important;
-}
-#peipe-video-app .pv-comment-input-wrap,
-#peipe-video-app .pv-comment-send-row {
-  border-radius: 24px !important;
-}
-#peipe-video-app .pv-comment-input-wrap {
-  background: rgba(17,24,39,.075) !important;
-  border: 0 !important;
-  box-shadow: none !important;
-  min-height: 46px !important;
-  padding: 0 7px !important;
-}
-#peipe-video-app .pv-comment-input,
-#peipe-video-app .pv-comment-input-wrap .pv-comment-input {
-  height: 44px !important;
-  border-radius: 22px !important;
-  background: transparent !important;
-  border: 0 !important;
-  outline: 0 !important;
-  box-shadow: none !important;
-  padding: 0 10px !important;
-}
-#peipe-video-app .pv-comment-input-wrap .pv-comment-input-translate,
-#peipe-video-app .pv-comment-input-wrap .pv-comment-action-btn {
-  width: 36px !important;
-  height: 36px !important;
-  min-width: 36px !important;
-  border-radius: 999px !important;
-}
-
-#peipe-video-app .pv-compose-panel {
-  background: rgba(18,18,22,.62) !important;
-  backdrop-filter: blur(22px) saturate(1.25) !important;
-  -webkit-backdrop-filter: blur(22px) saturate(1.25) !important;
-  border: 1px solid rgba(255,255,255,.14) !important;
-  border-bottom: 0 !important;
-}
-#peipe-video-app .pv-compose-panel textarea {
-  border-radius: 22px !important;
-  background: rgba(255,255,255,.12) !important;
-}
-#peipe-video-app .pv-compose-translate,
-#peipe-video-app .pv-image-btn,
-#peipe-video-app .pv-compose-submit {
-  border-radius: 999px !important;
-}
-
-#peipe-video-app .pv-translate-panel {
-  background: rgba(255,255,255,.94) !important;
-  color: #111827 !important;
-  backdrop-filter: blur(22px) saturate(1.18) !important;
-  -webkit-backdrop-filter: blur(22px) saturate(1.18) !important;
-}
-#peipe-video-app .pv-translate-panel .pv-panel-title,
-#peipe-video-app .pv-translate-panel label,
-#peipe-video-app .pv-lang-row label,
-#peipe-video-app .pv-lang-row label span,
-#peipe-video-app .pv-lang-arrow { color: #111827 !important; }
-#peipe-video-app .pv-translate-panel input,
-#peipe-video-app .pv-translate-panel select,
-#peipe-video-app .pv-translate-panel textarea,
-#peipe-video-app .pv-lang-row select {
-  background: rgba(17,24,39,.07) !important;
-  color: #111827 !important;
-  border-radius: 16px !important;
-}
-#peipe-video-app .pv-provider-tab {
-  background: rgba(17,24,39,.08) !important;
-  color: #111827 !important;
-}
-#peipe-video-app .pv-provider-tab.is-active {
-  background: #ff2442 !important;
-  color: #fff !important;
-}
-
-@media (max-width: 380px) {
-  #peipe-video-app .pv-tap-zone {
-    right: 68px !important;
-    bottom: max(110px, calc(var(--pv-bottom-safe) + 104px)) !important;
+  function currentUser() { return (window.app && window.app.user) || null; }
+  function isLoggedIn() { var u = currentUser(); return !!(u && Number(u.uid || 0) > 0); }
+  function alertError(msg) { if (window.app && app.alertError) app.alertError(msg); else window.alert(msg); }
+  function alertSuccess(msg) { if (window.app && app.alertSuccess) app.alertSuccess(msg); }
+  function safeJsonGet(key, fallback) { try { var raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : fallback; } catch (e) { return fallback; } }
+  function safeJsonSet(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) {} }
+  function escapeHtml(s) {
+    return String(s || '').replace(/[&<>'"]/g, function (ch) {
+      return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[ch];
+    });
   }
-}
+  function formatCount(n) {
+    n = Number(n || 0);
+    if (n >= 100000000) return (n / 100000000).toFixed(n >= 1000000000 ? 1 : 2).replace(/\.0+$/, '') + '亿';
+    if (n >= 10000) return (n / 10000).toFixed(n >= 100000 ? 1 : 2).replace(/\.0+$/, '') + '万';
+    return String(Math.max(0, Math.floor(n)));
+  }
+  function pad(n) { return String(n).padStart(2, '0'); }
+  function formatDuration(sec) { sec = Math.max(0, Math.floor(Number(sec) || 0)); return pad(Math.floor(sec / 60)) + ':' + pad(sec % 60); }
+  function parseTime(value) {
+    if (value == null || value === '') return 0;
+    if (typeof value === 'number') return value > 9999999999 ? value : value * 1000;
+    var s = String(value);
+    if (/^\d+$/.test(s)) { var n = Number(s); return n > 9999999999 ? n : n * 1000; }
+    var t = Date.parse(s); return Number.isNaN(t) ? 0 : t;
+  }
+  function relativeTime(value) {
+    var t = parseTime(value); if (!t) return '';
+    var diff = Math.max(0, Date.now() - t);
+    var m = 60000, h = 60 * m, d = 24 * h, mo = 30 * d, y = 365 * d;
+    if (diff >= y) return Math.floor(diff / y) + '年前';
+    if (diff >= mo) return Math.floor(diff / mo) + '个月前';
+    if (diff >= d) return Math.floor(diff / d) + '天前';
+    if (diff >= h) return Math.floor(diff / h) + '小时前';
+    if (diff >= m) return Math.max(1, Math.floor(diff / m)) + '分钟前';
+    return '刚刚';
+  }
 
-/* ===== v16 playback/preload fixes =====
-   - Hide custom middle play button.
-   - Leave only TikTok official bottom controls.
-   - Expand tap/swipe surface while preserving the bottom official control area.
-*/
-#peipe-video-app .pv-cover-play {
-  display: none !important;
-}
-#peipe-video-app .pv-cover-text {
-  margin-top: 0 !important;
-}
-#peipe-video-app .pv-slide-item.is-video .pv-tap-zone {
-  right: 96px !important;
-  bottom: max(88px, calc(var(--pv-bottom-safe) + 82px)) !important;
-  touch-action: pan-y !important;
-}
-#peipe-video-app .pv-tiktok-frame {
-  pointer-events: auto !important;
-}
-#peipe-video-app .pv-slide-item.is-video .pv-cover-fallback {
-  pointer-events: none !important;
-}
+  function apiFetch(url, options) {
+    options = options || {};
+    options.credentials = options.credentials || 'same-origin';
+    options.headers = Object.assign({ accept: 'application/json', 'x-requested-with': 'XMLHttpRequest' }, options.headers || {});
+    return fetch(rel(url), options).then(function (res) {
+      return res.json().catch(function () { return {}; }).then(function (json) {
+        if (!res.ok) {
+          var msg = json.error || json.message || (json.status && json.status.message) || ('HTTP ' + res.status);
+          throw new Error(msg);
+        }
+        return json;
+      });
+    });
+  }
 
-/* ===== v17 mobile playback/input polish =====
-   - Stop TikTok iframe from stealing taps and opening download pages.
-   - Use our own right-side sound toggle instead of TikTok bottom volume UI.
-   - Make mic/send/sound icons stroke-only and consistent.
-   - Put follow + on top of the avatar circle.
-*/
-#peipe-video-app .pv-tiktok-frame {
-  pointer-events: none !important;
-}
+  function isAutoText(text) {
+    var clean = norm(String(text || '').replace(/[•・·|｜_／/\\-]+/g, ' '));
+    return !clean || /^(?:动态|新动态|图片分享|图片动态|语音消息|语音动态|voice message|audio message|image|photo|picture)(?:\s*:??\s*\d{1,2}:\d{2}(?::\d{2})?)?$/i.test(clean);
+  }
+  function cleanDisplayText(text) {
+    var raw = String(text || '')
+      .replace(RE.tiktokShort, '')
+      .replace(RE.tiktokGlobal, '')
+      .replace(RE.tiktokToken, '')
+      .replace(/https?:\/\/(?:vt|vm)\.tiktok\.com\/?[^\s<>'"]*/ig, '')
+      .replace(/https?:\/\/vt\.?/ig, '')
+      .replace(/!\[[^\]]*\]\([^)]+\)/g, '')
+      .replace(/\[\s*(?:语音消息|语音动态|voice\s*message|audio\s*message)[^\]]*\]\([^)]+\)/ig, '');
+    var lines = raw.split(/[\r\n]+/)
+      .map(function (line) { return norm(line); })
+      .filter(function (line) { return line && !isAutoText(line); });
+    return lines.join('\n');
+  }
+  function displayText(item) { return cleanDisplayText(item && (item.text || item.title || '')); }
+  function isOwnAuthor(author) {
+    var me = currentUser();
+    if (!me || !author) return false;
+    return String(me.uid || '') === String(author.uid || '') || String(me.userslug || '').toLowerCase() === String(author.userslug || '').toLowerCase();
+  }
+  function authorHref(author) { return author && author.userslug ? rel('/user/' + encodeURIComponent(author.userslug)) : '#'; }
+  function avatarSrc(author) { return author && author.picture ? author.picture : ''; }
+  function canonicalTikTokUrl(url) {
+    var m = String(url || '').replace(/&amp;/g, '&').match(RE.tiktokOne);
+    return m ? 'https://www.tiktok.com/@' + m[1] + '/video/' + m[2] : String(url || '');
+  }
 
-#peipe-video-app .pv-slide-item.is-video .pv-tap-zone {
-  right: 0 !important;
-  bottom: 0 !important;
-  touch-action: pan-y !important;
-}
+  function addPreconnects() {
+    ['https://www.tiktok.com', 'https://www.tiktokcdn.com', 'https://p16-sign-va.tiktokcdn.com', 'https://p19-sign.tiktokcdn-us.com', 'https://p16-sign-sg.tiktokcdn.com'].forEach(function (href) {
+      if (document.querySelector('link[rel="preconnect"][href="' + href + '"]')) return;
+      var link = document.createElement('link');
+      link.rel = 'preconnect'; link.href = href; link.crossOrigin = 'anonymous'; document.head.appendChild(link);
+      var dns = document.createElement('link'); dns.rel = 'dns-prefetch'; dns.href = href; document.head.appendChild(dns);
+    });
+  }
+  function loadAsset(tag, url) {
+    return new Promise(function (resolve, reject) {
+      if (tag === 'script' && window.Swiper) return resolve();
+      var existing = document.querySelector(tag + '[data-pv-swiper]');
+      if (existing) {
+        existing.addEventListener('load', resolve, { once: true });
+        existing.addEventListener('error', reject, { once: true });
+        if (tag === 'link' || (tag === 'script' && window.Swiper)) return resolve();
+        return;
+      }
+      var el = document.createElement(tag);
+      el.dataset.pvSwiper = '1';
+      url = rel(url);
+      if (tag === 'link') { el.rel = 'stylesheet'; el.href = url; }
+      else { el.src = url; el.async = true; }
+      el.onload = resolve; el.onerror = reject;
+      document.head.appendChild(el);
+      if (tag === 'link') resolve();
+    });
+  }
+  function ensureSwiper() {
+    if (window.Swiper) return Promise.resolve(true);
+    return loadAsset('link', CONFIG.swiperCdnCss)
+      .then(function () { return loadAsset('script', CONFIG.swiperCdnJs); })
+      .then(function () { return !!window.Swiper; })
+      .catch(function (err) { console.warn('[peipe-video] Swiper load failed', err); return false; });
+  }
 
-#peipe-video-app .pv-sound-btn .pv-action-icon svg,
-#peipe-video-app .pv-sound-svg {
-  width: 24px !important;
-  height: 24px !important;
-  fill: none !important;
-  stroke: currentColor !important;
-  stroke-width: 2.1px !important;
-  stroke-linecap: round !important;
-  stroke-linejoin: round !important;
-}
+  function loadFeed(refresh) {
+    if (state.feedLoading || (state.feedDone && !refresh)) return Promise.resolve();
+    state.feedLoading = true;
+    if (refresh) {
+      state.feedPage = 1; state.feedDone = false; state.list = []; state.index = 0;
+      state.players.forEach(function (p) { try { if (p.iframe) p.iframe.remove(); } catch (e) {} });
+      state.players.clear(); state.imageSwipers.clear(); state.manualPausedKey = '';
+      updateSwiperSlides(true);
+    }
+    return apiFetch('/api/v3/plugins/peipe-video/feed?page=' + state.feedPage + '&pageSize=' + CONFIG.pageSize)
+      .then(function (json) {
+        var payload = json.response || json;
+        var items = (payload.items || []).map(function (item) {
+          item.images = (item.images || []).slice(0, CONFIG.imageMax);
+          item.viewer = item.viewer || { liked: false, following: false };
+          item.counts = item.counts || { likes: 0, comments: 0 };
+          item.text = displayText(item);
+          item.title = cleanDisplayText(item.title || '');
+          item.coverUrl = getCachedCoverUrl(item) || '';
+          return item;
+        }).filter(function (item) { return (item.tiktoks && item.tiktoks.length) || (item.images && item.images.length); });
+        items.forEach(function (item) {
+          var tk = item && item.tiktoks && item.tiktoks[0];
+          if (!tk || item.coverUrl) return;
+          fetchCover(tk.videoId, tk.url).then(function (url) {
+            if (url) item.coverUrl = url;
+          });
+        });
+        state.list = refresh ? items : state.list.concat(items);
+        state.feedDone = payload.hasMore === false || !items.length;
+        state.feedPage += 1;
+        updateSwiperSlides(refresh);
+        if (!state.list.length) showEmpty(TEXT.empty);
+      })
+      .catch(function (err) { console.error('[peipe-video] feed failed', err); showEmpty(err.message || TEXT.empty); })
+      .finally(function () { state.feedLoading = false; });
+  }
 
-#peipe-video-app .pv-sound-svg path {
-  fill: none !important;
-  stroke: currentColor !important;
-}
+  function initSwiper() {
+    var el = $('.pv-swiper', state.root);
+    if (!el || !window.Swiper) return false;
+    if (state.swiper) return true;
+    state.swiper = new window.Swiper(el, {
+      direction: 'vertical',
+      slidesPerView: 1,
+      speed: 240,
+      threshold: 2,
+      touchStartPreventDefault: false,
+      touchMoveStopPropagation: false,
+      touchReleaseOnEdges: false,
+      resistanceRatio: 0.34,
+      longSwipesRatio: 0.12,
+      followFinger: true,
+      watchSlidesProgress: true,
+      preventClicks: false,
+      preventClicksPropagation: false,
+      passiveListeners: false,
+      virtual: {
+        enabled: true,
+        addSlidesBefore: 2,
+        addSlidesAfter: Math.max(5, CONFIG.preloadAhead + 2),
+        slides: state.list.map(renderSlideHtml)
+      },
+      on: {
+        init: function (swiper) {
+          state.index = swiper.activeIndex || 0;
+          afterVirtualUpdate();
+          activateCurrent(false);
+          showComposeFabInitial();
+        },
+        slideChangeTransitionStart: function (swiper) {
+          state.hasInteracted = true;
+          state.soundUnlocked = true;
+          state.soundMuted = false;
+          safeJsonSet('pv-sound-unlocked', true);
+          safeJsonSet('pv-sound-muted', false);
+          updateSoundUi();
+          hideComposerFab();
+          var targetIndex = typeof swiper.activeIndex === 'number' ? swiper.activeIndex : state.index;
+          var previousIndex = typeof swiper.previousIndex === 'number' ? swiper.previousIndex : state.index;
+          state.index = targetIndex;
+          primeSlideForPlayback(targetIndex);
+          warmVideoWindow(targetIndex);
+          if (previousIndex !== targetIndex) pauseSlide(previousIndex, false);
+        },
+        slideChange: function (swiper) {
+          state.index = swiper.activeIndex || 0;
+          if (state.index >= state.list.length - 4) loadFeed(false);
+          afterVirtualUpdate();
+          activateCurrent(false);
+        },
+        virtualUpdate: function () { afterVirtualUpdate(); },
+        reachEnd: function () { loadFeed(false); }
+      }
+    });
+    return true;
+  }
+  function updateSwiperSlides(reset) {
+    if (!state.swiper) { initSwiper(); return; }
+    state.swiper.virtual.slides = state.list.map(renderSlideHtml);
+    state.swiper.virtual.update(true);
+    if (reset) state.swiper.slideTo(0, 0);
+    afterVirtualUpdate();
+  }
+  function afterVirtualUpdate() {
+    if (!state.root) return;
+    $$('.pv-slide-item', state.root).forEach(function (slide) {
+      var index = Number(slide.dataset.index || -1);
+      slide.classList.toggle('is-active', index === state.index);
+    });
+    initImageSwipers();
+    warmVideoWindow(state.index);
+  }
 
-#peipe-video-app .pv-sound-btn.is-active .pv-action-icon {
-  color: #fff !important;
-}
+  function getCachedCoverUrl(item) {
+    item = item || {};
+    var tk = item.tiktoks && item.tiktoks[0] || {};
+    return item.coverUrl || item.coverURL || item.cover || item.thumbnailUrl || item.thumbnail_url || item.thumbnail ||
+      tk.coverUrl || tk.coverURL || tk.cover || tk.thumbnailUrl || tk.thumbnail_url || tk.thumbnail || tk.cover_url || '';
+  }
+  function applyCoverToSlide(slide, url) {
+    var cover = $('.pv-cover', slide);
+    var img = $('.pv-cover img', slide);
+    if (!cover || !img || !url) return false;
+    img.onload = function () { cover.classList.remove('is-hidden'); cover.classList.add('has-cover'); };
+    img.onerror = function () { cover.classList.remove('has-cover'); try { img.removeAttribute('src'); } catch (e) {} };
+    if (img.getAttribute('src') !== url) img.src = url;
+    return true;
+  }
+  function renderVideoCoverFallback(item, images) {
+    var fallback = getCachedCoverUrl(item);
+    if (!fallback && images && images.length) fallback = images[0];
+    var hasFallback = !!fallback;
+    return '<div class="pv-cover pv-cover-fallback-wrap' + (hasFallback ? ' has-cover' : '') + '">' +
+      '<img ' + (hasFallback ? 'src="' + escapeHtml(fallback) + '" ' : '') + 'alt="" loading="eager" decoding="async">' +
+      '<div class="pv-cover-fallback"><div class="pv-cover-glow"></div><div class="pv-cover-play">▶</div><div class="pv-cover-text">正在加载</div></div>' +
+    '</div>';
+  }
+  function renderSlideHtml(item, index) {
+    item = item || {};
+    var text = displayText(item);
+    var hasVideo = !!(item.tiktoks && item.tiktoks[0]);
+    var images = (item.images || []).slice(0, CONFIG.imageMax);
+    var mediaHtml = hasVideo ? '<div class="pv-video-shell" data-video-id="' + escapeHtml(item.tiktoks[0].videoId) + '"></div>' :
+      (images.length ? renderImageMain(item) : '<div class="pv-error">这条动态没有 TikTok 或图片</div>');
+    var author = item.author || {};
+    var followUid = authorUid(author);
+    var avatar = avatarSrc(author);
+    var avatarHtml = avatar ? '<img class="pv-avatar" src="' + escapeHtml(avatar) + '" alt="avatar">' : '<div class="pv-avatar"></div>';
+    var following = readFollow(author) || item.viewer.following;
+    var liked = !!item.viewer.liked;
+    return '' +
+      '<section class="pv-slide-item ' + (hasVideo ? 'is-video' : 'is-image') + '" data-index="' + index + '" data-tid="' + escapeHtml(item.tid || '') + '">' +
+        '<div class="pv-media">' + mediaHtml + '</div>' +
+        (hasVideo ? renderVideoCoverFallback(item, images) : '') +
+        '<div class="pv-gradient"></div>' +
+        (hasVideo ? '<div class="pv-tap-zone" data-index="' + index + '"></div><button type="button" class="pv-center-play" data-index="' + index + '" aria-label="播放">▶</button>' : '') +
+        '<div class="pv-toolbar">' +
+          '<div class="pv-avatar-wrap"><span class="pv-avatar-link">' + avatarHtml + '</span>' +
+          (followUid && !isOwnAuthor(author) ? '<button type="button" class="pv-follow-plus ' + (following ? 'is-following' : '') + '" data-index="' + index + '">' + (following ? '✓' : '+') + '</button>' : '') + '</div>' +
+          '<button type="button" class="pv-action pv-like ' + (liked ? 'is-active' : '') + '" data-index="' + index + '"><span class="pv-action-icon">' + iconHeart(liked) + '</span><span>' + formatCount(item.counts.likes) + '</span></button>' +
+          '<button type="button" class="pv-action pv-comment-btn" data-index="' + index + '"><span class="pv-action-icon">' + iconComment() + '</span><span>' + formatCount(item.counts.comments) + '</span></button>' +
+          (hasVideo ? '<button type="button" class="pv-action pv-sound-btn ' + (!state.soundMuted && state.soundUnlocked ? 'is-active' : '') + '" data-index="' + index + '" aria-label="声音"><span class="pv-action-icon">' + iconSound(!state.soundMuted && state.soundUnlocked) + '</span><span class="pv-sound-label">声音</span></button>' : '') +
+          (images.length && hasVideo ? '<button type="button" class="pv-action pv-album-btn" data-index="' + index + '"><span class="pv-action-icon">' + iconPhoto() + '</span><span>' + images.length + '</span></button>' : '') +
+        '</div>' +
+        '<div class="pv-desc">' +
+          '<span class="pv-username">@' + escapeHtml(author.username || author.userslug || '用户') + '</span>' +
+          (text ? '<div class="pv-text-row" data-index="' + index + '"><span class="pv-text-main">' + escapeHtml(text) + '</span> <button type="button" class="pv-translate-btn" data-index="' + index + '" aria-label="' + TEXT.translate + '" title="' + TEXT.translate + '">' + iconTranslate() + '</button></div><div class="pv-translated"></div>' : '') +
+          '<div class="pv-time">' + relativeTime(item.createdAt) + '</div>' +
+        '</div>' +
+      '</section>';
+  }
+  function iconHeart() { return '<svg class="pv-heart-svg" viewBox="0 0 48 48" aria-hidden="true"><path d="M24 41s-2.2-1.3-5.2-3.4C10.2 31.4 5 25.8 5 18.6 5 12.7 9.5 8 15.2 8c3.5 0 6.6 1.8 8.8 4.7C26.2 9.8 29.3 8 32.8 8 38.5 8 43 12.7 43 18.6c0 7.2-5.2 12.8-13.8 19C26.2 39.7 24 41 24 41z"></path></svg>'; }
+  function iconComment() { return '<svg class="pv-comment-svg" viewBox="0 0 48 48" aria-hidden="true"><path d="M24 7.5c-9.8 0-17.5 6.8-17.5 15.2 0 5.4 3.2 10.2 8 12.9l-.8 5.2 6.1-3.4c1.4.3 2.8.4 4.2.4 9.8 0 17.5-6.8 17.5-15.1S33.8 7.5 24 7.5z"></path><circle cx="17.4" cy="23.3" r="2.1"></circle><circle cx="24" cy="23.3" r="2.1"></circle><circle cx="30.6" cy="23.3" r="2.1"></circle></svg>'; }
+  function iconTranslate() { return '<i class="fa-solid fa-language" aria-hidden="true"></i>'; }
+  function iconMic() { return '<svg class="pv-mic-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3z"></path><path d="M5 11a7 7 0 0 0 14 0M12 18v3m-4 0h8"></path></svg>'; }
+  function iconSend() { return '<svg class="pv-send-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h14M13 6l6 6-6 6"></path></svg>'; }
+  function iconPhoto() { return '<svg viewBox="0 0 48 48" aria-hidden="true"><path d="M10 10h28a4 4 0 0 1 4 4v20a4 4 0 0 1-4 4H10a4 4 0 0 1-4-4V14a4 4 0 0 1 4-4zm5 23h18l-6-8-4 5-3-4-5 7zm2-13a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"></path></svg>'; }
+  function iconSound(on) { return on ? '<svg class="pv-sound-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4z"></path><path d="M16 8.5a4 4 0 0 1 0 7M18.5 6a7.5 7.5 0 0 1 0 12"></path></svg>' : '<svg class="pv-sound-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4z"></path><path d="M17 9l4 4m0-4l-4 4"></path></svg>'; }
 
-#peipe-video-app .pv-sound-label {
-  font-size: 10px !important;
-  line-height: 1 !important;
-  color: rgba(255,255,255,.92) !important;
-}
+  function getImageIndex(item) {
+    var key = String(item && (item.tid || item.pid || state.list.indexOf(item)) || '');
+    return Math.max(0, Number(state.imageIndex.get(key) || 0));
+  }
+  function setImageIndex(item, index) {
+    var key = String(item && (item.tid || item.pid || state.list.indexOf(item)) || '');
+    var max = Math.max(0, (item.images || []).length - 1);
+    state.imageIndex.set(key, Math.max(0, Math.min(max, index)));
+  }
+  function renderImageMain(item) {
+    var images = (item.images || []).slice(0, CONFIG.imageMax);
+    var slideIndex = state.list.indexOf(item);
+    var slides = images.map(function (src, i) {
+      return '<div class="swiper-slide pv-image-swiper-slide"><img src="' + escapeHtml(src) + '" alt="image ' + (i + 1) + '" style="width:100%;height:100%;object-fit:cover;object-position:center center;display:block;"></div>';
+    }).join('');
+    return '<div class="pv-image-main" data-index="' + slideIndex + '">' +
+      '<div class="pv-image-swiper swiper" data-index="' + slideIndex + '"><div class="swiper-wrapper">' + slides + '</div>' +
+      (images.length > 1 ? '<div class="pv-image-pagination"></div>' : '') + '</div></div>';
+  }
+  function initImageSwipers() {
+    if (!window.Swiper) return;
+    var live = new Set();
+    $$('.pv-image-swiper', state.root).forEach(function (el) {
+      var idx = Number(el.dataset.index || -1);
+      live.add(idx);
+      var old = state.imageSwipers.get(idx);
+      if (old && old.el === el) return;
+      if (old) { try { old.destroy(true, true); } catch (e) {} state.imageSwipers.delete(idx); }
+      var item = state.list[idx];
+      if (!item || !(item.images && item.images.length)) return;
+      var swiper = new window.Swiper(el, {
+        direction: 'horizontal',
+        slidesPerView: 1,
+        speed: 220,
+        nested: true,
+        resistanceRatio: 0.55,
+        threshold: 3,
+        pagination: { el: $('.pv-image-pagination', el), clickable: false },
+        on: { slideChange: function (sw) { setImageIndex(item, sw.activeIndex || 0); } }
+      });
+      if (getImageIndex(item) > 0) swiper.slideTo(getImageIndex(item), 0);
+      state.imageSwipers.set(idx, swiper);
+    });
+    state.imageSwipers.forEach(function (sw, idx) {
+      if (live.has(idx)) return;
+      try { sw.destroy(true, true); } catch (e) {}
+      state.imageSwipers.delete(idx);
+    });
+  }
+  function findSlide(index) { return $('.pv-slide-item[data-index="' + index + '"]', state.root); }
 
-#peipe-video-app .pv-comment-action-btn,
-#peipe-video-app .pv-comment-input-translate {
-  background: rgba(17,24,39,.075) !important;
-  color: rgba(17,24,39,.68) !important;
-}
+  function buildPlayerUrl(videoId, opts) {
+    opts = opts || {};
+    if (typeof opts === 'boolean') opts = { autoplay: opts };
+    var params = new URLSearchParams({
+      autoplay: opts.autoplay === false ? '0' : '1',
+      muted: opts.muted ? '1' : '0',
+      loop: '1',
+      rel: '0',
+      controls: opts.controls ? '1' : '0',
+      progress_bar: opts.controls ? '1' : '0',
+      play_button: '0',
+      volume_control: '0',
+      fullscreen_button: '0',
+      timestamp: '0',
+      music_info: '0',
+      description: '0',
+      native_context_menu: '0',
+      closed_caption: '0',
+      playsinline: '1'
+    });
+    return 'https://www.tiktok.com/player/v1/' + encodeURIComponent(videoId) + '?' + params.toString();
+  }
+  function playerKey(index, videoId) {
+    var item = state.list[index] || {};
+    return 'pv:' + String(item.tid || item.pid || index) + ':' + String(videoId || '');
+  }
+  function isWarmIndex(index) {
+    var ahead = Math.max(1, Number(CONFIG.keepWarmVideoAhead || CONFIG.preloadVideoAhead || 2));
+    var behind = Math.max(0, Number(CONFIG.keepWarmVideoBehind || 1));
+    return index >= state.index - behind && index <= state.index + ahead;
+  }
+  function isCurrentPlayer(player) {
+    return !!player && player.index === state.index;
+  }
+  function ensureTikTokPlayer(index, autoplay) {
+    var item = state.list[index];
+    var slide = findSlide(index);
+    if (!slide || !item || !(item.tiktoks && item.tiktoks[0])) return null;
+    var tk = item.tiktoks[0];
+    var key = playerKey(index, tk.videoId);
+    var player = state.players.get(key);
+    if (player && player.iframe && player.iframe.parentNode && player.iframe.src !== 'about:blank') {
+      player.index = index;
+      player.item = item;
+      if (index === state.index) {
+        try { player.iframe.loading = 'eager'; player.iframe.fetchPriority = 'high'; } catch (e) {}
+      }
+      return player;
+    }
+    var shell = $('.pv-video-shell', slide);
+    if (!shell) return null;
+    shell.innerHTML = '';
+    var iframe = document.createElement('iframe');
+    var isCurrent = index === state.index;
+    iframe.className = 'pv-tiktok-frame';
+    iframe.src = buildPlayerUrl(tk.videoId, {
+      autoplay: true,
+      muted: !isCurrent || !state.soundUnlocked || state.soundMuted
+    });
+    iframe.allow = 'autoplay; fullscreen; encrypted-media; picture-in-picture';
+    iframe.loading = 'eager';
+    iframe.fetchPriority = isCurrent ? 'high' : 'low';
+    iframe.referrerPolicy = 'strict-origin-when-cross-origin';
+    iframe.title = 'TikTok Player';
+    shell.appendChild(iframe);
+    player = {
+      key: key,
+      index: index,
+      item: item,
+      videoId: tk.videoId,
+      iframe: iframe,
+      ready: false,
+      wantPlay: false,
+      status: 'loading',
+      playSeq: 0,
+      prewarmStarted: false,
+      pauseRetryTimer: 0,
+      watchdogTimer: 0,
+      retryReloadedAt: 0
+    };
+    state.players.set(key, player);
+    var cachedCover = getCachedCoverUrl(item);
+    if (cachedCover) {
+      applyCoverToSlide(slide, cachedCover);
+    } else {
+      fetchCover(tk.videoId, tk.url).then(function (url) {
+        if (url) applyCoverToSlide(slide, url);
+      });
+    }
+    return player;
+  }
+  function prepareSlide(index, autoplay) {
+    if (index < 0 || index >= state.list.length) return null;
+    var item = state.list[index];
+    if (!item || !(item.tiktoks && item.tiktoks[0])) return null;
+    return ensureTikTokPlayer(index, !!autoplay);
+  }
+  function tryPlayPlayer(player, unmute) {
+    if (!player || !player.iframe || player.iframe.src === 'about:blank') return;
+    if (unmute && state.soundUnlocked && !state.soundMuted) sendToPlayer(player.iframe, 'unMute');
+    else sendToPlayer(player.iframe, 'mute');
+    sendToPlayer(player.iframe, 'play');
+  }
+  function clearPlaybackWatchdog(player) {
+    if (!player || !player.watchdogTimer) return;
+    clearTimeout(player.watchdogTimer);
+    player.watchdogTimer = 0;
+  }
+  function schedulePlaybackWatchdog(player, delay, reason) {
+    if (!player || !player.iframe || player.iframe.src === 'about:blank') return;
+    if (player.index !== state.index || !player.wantPlay || state.manualPausedKey === player.key) return;
+    clearPlaybackWatchdog(player);
+    player.watchdogTimer = setTimeout(function () {
+      if (!player || !player.iframe || player.iframe.src === 'about:blank') return;
+      if (player.index !== state.index || !player.wantPlay || state.manualPausedKey === player.key || player.status === 'playing') return;
+      var now = Date.now();
+      var slide = findSlide(player.index);
+      if (slide) slide.classList.add('is-loading');
 
-#peipe-video-app .pv-comment-action-btn.is-send {
-  background: #ff2442 !important;
-  color: #fff !important;
-}
+      // TikTok iframes occasionally stay in loading/buffering forever on weak networks or low-memory phones.
+      // A soft src refresh is safer than keeping the dead iframe; throttle it to avoid reload loops.
+      if (!player.retryReloadedAt || now - player.retryReloadedAt > 9000) {
+        player.retryReloadedAt = now;
+        player.ready = false;
+        player.status = 'loading';
+        try {
+          player.iframe.src = buildPlayerUrl(player.videoId, {
+            autoplay: true,
+            muted: !state.soundUnlocked || state.soundMuted
+          });
+        } catch (e) {}
+      }
+      tryPlayPlayer(player, !!state.soundUnlocked);
+      setTimeout(function () {
+        if (player && player.index === state.index && player.wantPlay && player.status !== 'playing') {
+          tryPlayPlayer(player, !!state.soundUnlocked);
+        }
+      }, 880);
+      schedulePlaybackWatchdog(player, CONFIG.playbackWatchdogMs + 1200, reason || 'retry');
+    }, Math.max(1200, Number(delay || CONFIG.playbackWatchdogMs)));
+  }
+  function currentPlayer() {
+    var item = state.list[state.index];
+    return item && item.tiktoks && item.tiktoks[0] ? state.players.get(playerKey(state.index, item.tiktoks[0].videoId)) : null;
+  }
+  function soundIsOn() { return !!(state.soundUnlocked && !state.soundMuted); }
+  function updateSoundUi() {
+    if (!state.root) return;
+    var on = soundIsOn();
+    $$('.pv-sound-btn', state.root).forEach(function (btn) {
+      btn.classList.toggle('is-active', on);
+      var icon = $('.pv-action-icon', btn);
+      if (icon) icon.innerHTML = iconSound(on);
+    });
+  }
+  function setSoundMuted(muted) {
+    state.hasInteracted = true;
+    state.soundUnlocked = true;
+    state.soundMuted = !!muted;
+    safeJsonSet('pv-sound-unlocked', true);
+    safeJsonSet('pv-sound-muted', state.soundMuted);
+    var player = currentPlayer();
+    if (player && player.iframe) {
+      if (state.soundMuted) {
+        sendToPlayer(player.iframe, 'mute');
+      } else {
+        player.wantPlay = true;
+        tryPlayPlayer(player, true);
+      }
+    }
+    updateSoundUi();
+  }
+  function toggleSound(index) {
+    if (typeof index === 'number' && index !== state.index && state.swiper) {
+      try { state.swiper.slideTo(index, 180); } catch (e) {}
+    }
+    setSoundMuted(!state.soundMuted);
+  }
+  function schedulePrewarm(player) {
+    if (!player || !player.iframe || isCurrentPlayer(player)) return;
+    sendToPlayer(player.iframe, 'mute');
+    if (!CONFIG.enableSegmentPrewarm || player.index !== state.index + 1) {
+      if (player.ready && !player.wantPlay) {
+        setTimeout(function () {
+          if (!player || !player.iframe || isCurrentPlayer(player) || player.wantPlay) return;
+          sendToPlayer(player.iframe, 'mute');
+          sendToPlayer(player.iframe, 'pause');
+          player.status = 'paused';
+        }, 120);
+      }
+      return;
+    }
+    if (!player.ready || player.prewarmStarted) return;
+    player.prewarmStarted = true;
+    tryPlayPlayer(player, false);
+    setTimeout(function () {
+      if (!player || !player.iframe || isCurrentPlayer(player) || player.wantPlay) return;
+      sendToPlayer(player.iframe, 'mute');
+      sendToPlayer(player.iframe, 'pause');
+      player.status = 'paused';
+    }, CONFIG.segmentPrewarmMs);
+  }
+  function forcePlayerAutoplay(player) {
+    if (!player || !player.iframe) return null;
+    player.wantPlay = true;
+    try { player.iframe.loading = 'eager'; player.iframe.fetchPriority = 'high'; } catch (e) {}
+    tryPlayPlayer(player, !!state.soundUnlocked);
+    return player;
+  }
+  function primeSlideForPlayback(index) {
+    var player = ensureTikTokPlayer(index, true);
+    if (!player) return null;
+    player.wantPlay = true;
+    tryPlayPlayer(player, !!state.soundUnlocked);
+    return player;
+  }
 
-#peipe-video-app .pv-mic-svg,
-#peipe-video-app .pv-send-svg {
-  width: 20px !important;
-  height: 20px !important;
-  fill: none !important;
-  stroke: currentColor !important;
-  stroke-width: 2.2px !important;
-  stroke-linecap: round !important;
-  stroke-linejoin: round !important;
-}
+  function warmVideoWindow(fromIndex) {
+    if (fromIndex < 0 || fromIndex >= state.list.length) return;
+    ensureTikTokPlayer(fromIndex, fromIndex === state.index);
 
-#peipe-video-app .pv-mic-svg path,
-#peipe-video-app .pv-send-svg path {
-  fill: none !important;
-  stroke: currentColor !important;
-}
+    var behind = Math.max(0, Number(CONFIG.keepWarmVideoBehind || 1));
+    for (var b = fromIndex - 1; b >= Math.max(0, fromIndex - behind); b -= 1) {
+      var prev = state.list[b];
+      if (prev && prev.tiktoks && prev.tiktoks[0]) {
+        var prevPlayer = ensureTikTokPlayer(b, false);
+        if (prevPlayer) {
+          sendToPlayer(prevPlayer.iframe, 'mute');
+          sendToPlayer(prevPlayer.iframe, 'pause');
+        }
+      }
+    }
 
-#peipe-video-app .pv-avatar-wrap {
-  position: relative !important;
-  overflow: visible !important;
-}
+    var warmed = 0;
+    var maxAhead = Math.max(1, Number(CONFIG.keepWarmVideoAhead || CONFIG.preloadVideoAhead || 2));
+    var maxScan = Math.min(state.list.length - 1, fromIndex + Math.max(8, CONFIG.preloadAhead + 4));
+    for (var i = fromIndex + 1; i <= maxScan && warmed < maxAhead; i += 1) {
+      var item = state.list[i];
+      if (item && item.tiktoks && item.tiktoks[0]) {
+        var p = ensureTikTokPlayer(i, false);
+        schedulePrewarm(p);
+        warmed += 1;
+      }
+    }
+  }
+  function sendToPlayer(iframe, type, value) {
+    if (!iframe || !iframe.contentWindow || iframe.src === 'about:blank') return;
+    var msg = { 'x-tiktok-player': true, type: type };
+    if (arguments.length >= 3) msg.value = value;
+    iframe.contentWindow.postMessage(msg, 'https://www.tiktok.com');
+  }
+  function hardStopPlayer(player, force) {
+    if (!player || !player.iframe) return;
+    sendToPlayer(player.iframe, 'pause');
+    setTimeout(function () { sendToPlayer(player.iframe, 'pause'); }, 40);
+    var stop = function () {
+      if (!player || !player.iframe) return;
+      if (!force && (player.index === state.index || isWarmIndex(player.index))) return;
+      clearPlaybackWatchdog(player);
+      try {
+        player.iframe.src = 'about:blank';
+        if (player.iframe.parentNode) player.iframe.remove();
+      } catch (e) {}
+      player.ready = false;
+      player.status = 'paused';
+      player.wantPlay = false;
+      state.players.delete(player.key);
+    };
+    if (force) stop();
+    else setTimeout(stop, 650);
+  }
+  function playSlide(index, userGesture) {
+    var item = state.list[index];
+    if (!item || !(item.tiktoks && item.tiktoks[0])) { warmVideoWindow(index); return; }
+    var videoId = item.tiktoks[0].videoId;
+    var key = playerKey(index, videoId);
+    if (state.manualPausedKey === key && !userGesture) return;
+    if (userGesture) {
+      state.hasInteracted = true;
+      state.soundUnlocked = true;
+      safeJsonSet('pv-sound-unlocked', true);
+    }
+    var player = ensureTikTokPlayer(index, true);
+    if (!player || !player.iframe) return;
+    state.manualPausedKey = '';
+    player.wantPlay = true;
+    player.playSeq = (player.playSeq || 0) + 1;
+    var seq = player.playSeq;
+    pauseOtherPlayers(player.key);
+    var slide = findSlide(index);
+    if (slide) { slide.classList.add('is-loading'); slide.classList.remove('is-paused'); }
 
-#peipe-video-app .pv-follow-plus {
-  top: -8px !important;
-  bottom: auto !important;
-  left: 50% !important;
-  transform: translateX(-50%) !important;
-  z-index: 4 !important;
-  width: 20px !important;
-  height: 20px !important;
-  min-width: 20px !important;
-  border: 2px solid rgba(255,255,255,.95) !important;
-  box-shadow: 0 2px 8px rgba(0,0,0,.28) !important;
-}
+    function stillWantsPlay() {
+      return player.wantPlay && player.playSeq === seq && state.manualPausedKey !== player.key && player.index === state.index;
+    }
+    function requestPlay() {
+      if (!stillWantsPlay() || player.status === 'playing') return;
+      tryPlayPlayer(player, !!state.soundUnlocked);
+    }
+    requestPlay();
+    setTimeout(requestPlay, 420);
+    setTimeout(requestPlay, 1200);
+    setTimeout(function () { if (stillWantsPlay() && player.status !== 'playing') markSlidePlaying(index); }, 1900);
+    schedulePlaybackWatchdog(player, CONFIG.playbackWatchdogMs, 'play');
+    warmVideoWindow(index);
+  }
+  function pauseSlide(index, force, manual) {
+    state.players.forEach(function (p) {
+      if (p.index !== index) return;
+      p.wantPlay = false;
+      p.status = 'paused';
+      p.playSeq = (p.playSeq || 0) + 1;
+      if (manual) state.manualPausedKey = p.key;
+      if (p.pauseRetryTimer) { clearTimeout(p.pauseRetryTimer); p.pauseRetryTimer = 0; }
+      clearPlaybackWatchdog(p);
+      if (p.iframe) {
+        sendToPlayer(p.iframe, 'mute');
+        sendToPlayer(p.iframe, 'pause');
+        setTimeout(function () { sendToPlayer(p.iframe, 'pause'); }, 80);
+      }
+      if (force || (!manual && !isWarmIndex(p.index))) hardStopPlayer(p, !!force);
+    });
+    var slide = findSlide(index);
+    if (slide) {
+      slide.classList.remove('is-playing', 'is-loading');
+      slide.classList.toggle('is-paused', !!manual && index === state.index);
+    }
+  }
+  function pauseOtherPlayers(currentKey) {
+    state.players.forEach(function (p, key) {
+      if (key === currentKey) return;
+      p.wantPlay = false;
+      p.playSeq = (p.playSeq || 0) + 1;
+      if (p.pauseRetryTimer) { clearTimeout(p.pauseRetryTimer); p.pauseRetryTimer = 0; }
+      clearPlaybackWatchdog(p);
+      var warm = isWarmIndex(p.index);
+      if (p.iframe) {
+        sendToPlayer(p.iframe, 'mute');
+        if (warm && p.index > state.index) {
+          schedulePrewarm(p);
+        } else {
+          sendToPlayer(p.iframe, 'pause');
+        }
+      }
+      if (!warm || Math.abs(p.index - state.index) > CONFIG.preloadAhead) hardStopPlayer(p, true);
+      var slide = findSlide(p.index);
+      if (slide) slide.classList.remove('is-playing', 'is-loading', 'is-paused');
+    });
+  }
+  function prunePlayers() {
+    var ahead = Math.max(1, Number(CONFIG.keepWarmVideoAhead || CONFIG.preloadVideoAhead || 2));
+    var behind = Math.max(0, Number(CONFIG.keepWarmVideoBehind || 1));
+    state.players.forEach(function (p) {
+      if (p.index >= state.index - behind && p.index <= state.index + ahead) return;
+      hardStopPlayer(p, true);
+    });
+  }
+  function activateCurrent() {
+    state.index = state.swiper ? state.swiper.activeIndex : state.index;
+    $$('.pv-slide-item', state.root).forEach(function (slide) {
+      var idx = Number(slide.dataset.index || -1);
+      slide.classList.toggle('is-active', idx === state.index);
+      if (idx !== state.index) slide.classList.remove('is-playing', 'is-loading', 'is-paused');
+    });
+    var item = state.list[state.index];
+    var currentKey = item && item.tiktoks && item.tiktoks[0] ? playerKey(state.index, item.tiktoks[0].videoId) : '';
+    var curSlide = findSlide(state.index);
+    if (currentKey !== state.manualPausedKey) {
+      if (curSlide) curSlide.classList.remove('is-paused');
+      playSlide(state.index, !!(state.hasInteracted || state.soundUnlocked));
+    } else {
+      if (curSlide) curSlide.classList.add('is-paused');
+      warmVideoWindow(state.index);
+    }
+    prunePlayers();
+  }
+  function markSlidePlaying(index) {
+    var slide = findSlide(index);
+    if (!slide) return;
+    var cover = $('.pv-cover', slide);
+    if (cover) cover.classList.add('is-hidden');
+    slide.classList.add('is-playing');
+    slide.classList.remove('is-loading', 'is-paused');
+    updateSoundUi();
+  }
+  window.addEventListener('message', function (event) {
+    var data = event.data;
+    if (typeof data === 'string') { try { data = JSON.parse(data); } catch (e) { return; } }
+    if (!data || !data['x-tiktok-player']) return;
+    var host = '';
+    try { host = new URL(event.origin).hostname; } catch (e) {}
+    if (!host || !/(^|\.)tiktok\.com$|(^|\.)tiktokcdn\.com$/.test(host)) return;
+    state.players.forEach(function (player) {
+      if (!player.iframe || player.iframe.contentWindow !== event.source) return;
+      if (data.type === 'onPlayerReady') {
+        player.ready = true;
+        if (player.index === state.index && player.wantPlay && state.manualPausedKey !== player.key) {
+          tryPlayPlayer(player, !!state.soundUnlocked);
+        } else if (isWarmIndex(player.index)) {
+          schedulePrewarm(player);
+        }
+        return;
+      }
+      if (data.type === 'onStateChange') {
+        var value = Number(data.value); var word = String(data.value || '').toLowerCase();
+        if (value === 1 || word === 'playing') {
+          player.status = 'playing';
+          clearPlaybackWatchdog(player);
+          if (player.index === state.index) {
+            if (state.hasInteracted || state.soundUnlocked) safeJsonSet('pv-sound-unlocked', true);
+            markSlidePlaying(player.index);
+          } else {
+            if (!isWarmIndex(player.index)) sendToPlayer(player.iframe, 'pause');
+          }
+        } else if (value === 2 || value === 0 || word === 'paused' || word === 'ended') {
+          player.status = 'paused';
+          var s = findSlide(player.index);
+          if (s) s.classList.remove('is-loading');
+          if (player.index === state.index && player.wantPlay && state.manualPausedKey !== player.key) {
+            if (player.pauseRetryTimer) clearTimeout(player.pauseRetryTimer);
+            player.pauseRetryTimer = setTimeout(function () {
+              if (player.index === state.index && player.wantPlay && state.manualPausedKey !== player.key && player.status !== 'playing') {
+                tryPlayPlayer(player, !!state.soundUnlocked);
+                schedulePlaybackWatchdog(player, CONFIG.playbackWatchdogMs, 'paused');
+              }
+            }, 520);
+          }
+        } else if (value === 3 || word === 'buffering') {
+          var s2 = findSlide(player.index);
+          if (s2 && player.index === state.index && player.wantPlay) {
+            s2.classList.add('is-loading');
+            schedulePlaybackWatchdog(player, Math.max(2600, CONFIG.playbackWatchdogMs - 1200), 'buffering');
+          }
+        }
+      }
+    });
+  });
+  function coverCacheKey(videoId) { return 'pv-cover:' + videoId; }
+  function fetchCover(videoId, url) {
+    var cached = safeJsonGet(coverCacheKey(videoId), null);
+    if (cached && cached.url && cached.expiresAt > Date.now()) return Promise.resolve(cached.url);
+    var canonical = canonicalTikTokUrl(url);
+    if (!/^https?:\/\//i.test(canonical)) return Promise.resolve('');
+    return fetch('https://www.tiktok.com/oembed?url=' + encodeURIComponent(canonical), { cache: 'force-cache' })
+      .then(function (r) { return r.ok ? r.json() : {}; })
+      .then(function (json) {
+        var thumb = json.thumbnail_url || '';
+        if (thumb) {
+          safeJsonSet(coverCacheKey(videoId), { url: thumb, expiresAt: Date.now() + CONFIG.coverCacheMs });
+          saveCoverToServer(videoId, canonical, thumb);
+        }
+        return thumb;
+      })
+      .catch(function () { return ''; });
+  }
+  function saveCoverToServer(videoId, url, coverUrl) {
+    if (!videoId || !coverUrl || !CONFIG.coverCacheEndpoint) return;
+    var key = 'pv-cover-server-sent:' + videoId;
+    var sent = safeJsonGet(key, null);
+    if (sent && sent.coverUrl === coverUrl && sent.expiresAt > Date.now()) return;
+    apiFetch(CONFIG.coverCacheEndpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json; charset=utf-8', 'x-csrf-token': csrfToken() },
+      body: JSON.stringify({ videoId: String(videoId), url: url || '', coverUrl: coverUrl })
+    }).then(function () {
+      safeJsonSet(key, { coverUrl: coverUrl, expiresAt: Date.now() + CONFIG.coverCacheMs });
+    }).catch(function () {});
+  }
 
-#peipe-video-app .pv-follow-plus.is-following {
-  top: -8px !important;
-  bottom: auto !important;
-}
+  function localUserSuffix() { var u = currentUser(); return String(u && u.uid || 'guest'); }
+  function voteStoreKey() { return 'pv-vote-state:' + localUserSuffix(); }
+  function voteStore() { return safeJsonGet(voteStoreKey(), {}); }
+  function readVote(pid, tid) { var s = voteStore(); if (pid && s['pid:' + pid] !== undefined) return !!s['pid:' + pid]; if (tid && s['tid:' + tid] !== undefined) return !!s['tid:' + tid]; return false; }
+  function writeVote(pid, tid, voted) { var s = voteStore(); if (pid) s['pid:' + pid] = !!voted; if (tid) s['tid:' + tid] = !!voted; safeJsonSet(voteStoreKey(), s); }
+  function updateLikeUi(slide, item) {
+    if (!slide) return; var btn = $('.pv-like', slide); if (!btn) return;
+    btn.classList.toggle('is-active', !!item.viewer.liked);
+    var icon = $('.pv-action-icon', btn); if (icon) icon.innerHTML = iconHeart();
+    var count = $('span:last-child', btn); if (count) count.textContent = formatCount(item.counts.likes);
+  }
+  function toggleLike(item, slide, optimistic, point) {
+    if (!isLoggedIn()) return alertError(TEXT.loginFirst);
+    if (!item || !item.pid) return alertError(TEXT.likeFail);
+    if (item._votePending) return;
+    var old = !!(item.viewer && item.viewer.liked);
+    var oldCount = Math.max(0, Number(item.counts && item.counts.likes || 0));
+    var next = !old;
+    item._votePending = true;
+    item.viewer = item.viewer || {};
+    item.counts = item.counts || {};
+    item.viewer.liked = next;
+    item.counts.likes = Math.max(0, oldCount + (next ? 1 : -1));
+    updateLikeUi(slide, item);
+    if (point && next) showHeart(point.x, point.y);
+    apiFetch('/api/v3/posts/' + encodeURIComponent(item.pid) + '/vote', {
+      method: next ? 'PUT' : 'DELETE',
+      headers: { 'content-type': 'application/json; charset=utf-8', 'x-csrf-token': csrfToken() },
+      body: JSON.stringify({ delta: 1 })
+    }).then(function (json) {
+      var payload = json && (json.response || json) || {};
+      var votes = payload.votes || payload.upvotes || payload.voteCount;
+      item.viewer.liked = next;
+      if (votes !== undefined && votes !== null && !Number.isNaN(Number(votes))) item.counts.likes = Math.max(0, Number(votes));
+      writeVote(item.pid, item.tid, next);
+      updateLikeUi(slide, item);
+    }).catch(function (err) {
+      item.viewer.liked = old;
+      item.counts.likes = oldCount;
+      writeVote(item.pid, item.tid, old);
+      updateLikeUi(slide, item);
+      alertError((err && err.message) || (next ? TEXT.likeFail : TEXT.unlikeFail));
+    }).finally(function () {
+      item._votePending = false;
+    });
+  }
+  function showHeart(x, y) {
+    var heart = document.createElement('div');
+    heart.className = 'pv-heart-burst'; heart.textContent = '♥'; heart.style.left = x + 'px'; heart.style.top = y + 'px';
+    state.root.appendChild(heart); setTimeout(function () { heart.remove(); }, 760);
+  }
+  function followStoreKey() { return 'pv-follow-state:' + localUserSuffix(); }
+  function followStore() { return safeJsonGet(followStoreKey(), {}); }
+  function readFollow(author) { if (!author) return false; var s = followStore(); if (author.uid && s['uid:' + author.uid] !== undefined) return !!s['uid:' + author.uid]; if (author.userslug && s['slug:' + String(author.userslug).toLowerCase()] !== undefined) return !!s['slug:' + String(author.userslug).toLowerCase()]; return false; }
+  function writeFollow(author, following) { var s = followStore(); if (author.uid) s['uid:' + author.uid] = !!following; if (author.userslug) s['slug:' + String(author.userslug).toLowerCase()] = !!following; safeJsonSet(followStoreKey(), s); }
+  function updateFollowUi(slide, following) { var btn = $('.pv-follow-plus', slide); if (!btn) return; btn.classList.toggle('is-following', !!following); btn.textContent = following ? '✓' : '+'; }
+  function authorUid(author) {
+    author = author || {};
+    return String(author.uid || author.userId || author.userid || author.uidNumber || '').trim();
+  }
+  function updateFollowUiForAuthor(author, following) {
+    var uid = authorUid(author);
+    var slug = String(author && author.userslug || '').toLowerCase();
+    $$('.pv-slide-item', state.root).forEach(function (slide) {
+      var idx = Number(slide.dataset.index || -1);
+      var item = state.list[idx] || {};
+      var a = item.author || {};
+      var same = (uid && authorUid(a) === uid) || (slug && String(a.userslug || '').toLowerCase() === slug);
+      if (same) updateFollowUi(slide, following);
+    });
+  }
+  function followApi(uid, follow) {
+    var token = csrfToken();
+    if (!token) return Promise.reject(new Error('CSRF 失效，请刷新页面后重试'));
+    return fetch(rel('/api/v3/users/' + encodeURIComponent(uid) + '/follow'), {
+      method: follow ? 'PUT' : 'DELETE',
+      credentials: 'same-origin',
+      headers: {
+        accept: 'application/json',
+        'x-csrf-token': token,
+        'x-requested-with': 'XMLHttpRequest'
+      }
+    }).then(function (res) {
+      return res.text().then(function (text) {
+        var json = {};
+        try { json = text ? JSON.parse(text) : {}; } catch (e) {}
+        if (!res.ok) {
+          var msg = json.error || json.message || (json.status && json.status.message) || text || ('HTTP ' + res.status);
+          throw new Error(msg);
+        }
+        return json.response || json;
+      });
+    });
+  }
+  function toggleFollow(item, slide) {
+    if (!isLoggedIn()) return alertError(TEXT.loginFirst);
+    item = item || {};
+    var author = item.author || {};
+    var uid = authorUid(author);
+    if (!uid) return alertError(TEXT.followFail + '：缺少用户 ID');
+    if (item._followPending) return;
+    var old = readFollow(author) || !!(item.viewer && item.viewer.following);
+    var next = !old;
+    item._followPending = true;
+    item.viewer = item.viewer || {};
+    item.viewer.following = next;
+    writeFollow(author, next);
+    updateFollowUi(slide, next);
+    updateFollowUiForAuthor(author, next);
+    followApi(uid, next)
+      .then(function () { alertSuccess(next ? TEXT.followed : TEXT.unfollowed); })
+      .catch(function (err) {
+        item.viewer.following = old;
+        writeFollow(author, old);
+        updateFollowUi(slide, old);
+        updateFollowUiForAuthor(author, old);
+        alertError((err && err.message) || (next ? TEXT.followFail : TEXT.unfollowFail));
+      })
+      .finally(function () {
+        item._followPending = false;
+      });
+  }
 
+  var LANGUAGE_META = {
+    auto: { flag: '🌐', label: '自动检测' }, zh: { flag: '🇨🇳', label: '中文' }, en: { flag: '🇺🇸', label: 'English' },
+    my: { flag: '🇲🇲', label: 'မြန်မာ' }, mm: { flag: '🇲🇲', label: 'မြန်မာ' }, th: { flag: '🇹🇭', label: 'ไทย' },
+    vi: { flag: '🇻🇳', label: 'Tiếng Việt' }, km: { flag: '🇰🇭', label: 'ភាសាខ្មែរ' }, lo: { flag: '🇱🇦', label: 'ລາວ' },
+    ja: { flag: '🇯🇵', label: '日本語' }, ko: { flag: '🇰🇷', label: '한국어' }, ms: { flag: '🇲🇾', label: 'Malay' },
+    tl: { flag: '🇵🇭', label: 'Tagalog' }, id: { flag: '🇮🇩', label: 'Indonesia' }, fr: { flag: '🇫🇷', label: 'Français' },
+    de: { flag: '🇩🇪', label: 'Deutsch' }, es: { flag: '🇪🇸', label: 'Español' }, ru: { flag: '🇷🇺', label: 'Русский' }
+  };
+  var DEFAULT_AI_PROMPT = '你是专业论坛翻译助手。请把用户提供的内容从 {{sourceLang}} 翻译为 {{targetLang}}。保留原有语气、换行、链接、用户名、表情和列表结构。只输出译文，不要解释。';
+  function normalizeLang(code, fallback) { code = norm(code).toLowerCase().replace(/_/g, '-'); if (!code) return fallback || 'auto'; var short = code.split('-')[0]; return LANGUAGE_META[code] ? code : (LANGUAGE_META[short] ? short : (fallback || code)); }
+  function langOptions(includeAuto) {
+    var arr = includeAuto ? ['auto','zh','en','my','th','vi','km','lo','ja','ko','ms','tl','id','fr','de','es','ru'] : ['zh','en','my','th','vi','km','lo','ja','ko','ms','tl','id','fr','de','es','ru'];
+    return arr.map(function (code) { var m = LANGUAGE_META[code] || { label: code, flag: '🏳️' }; return '<option value="' + code + '">' + m.flag + ' ' + m.label + '</option>'; }).join('');
+  }
+  function getTranslateSettings() {
+    var saved = safeJsonGet('pv-translate-settings', {}) || {};
+    return {
+      provider: saved.provider === 'ai' ? 'ai' : 'google',
+      sourceLang: normalizeLang(saved.sourceLang, 'auto'),
+      targetLang: normalizeLang(saved.targetLang, (navigator.language || 'zh').split('-')[0] || 'zh'),
+      aiEndpoint: saved.aiEndpoint || '', aiModel: saved.aiModel || '', aiApiKey: saved.aiApiKey || '',
+      aiPrompt: saved.aiPrompt || DEFAULT_AI_PROMPT,
+      temperature: Number.isFinite(Number(saved.temperature)) ? Number(saved.temperature) : 0.3
+    };
+  }
+  function translateCacheKey(text) { var s = getTranslateSettings(); return 'pv-tr:' + s.provider + ':' + (s.aiModel || 'google') + ':' + s.sourceLang + ':' + s.targetLang + ':' + encodeURIComponent(norm(text)).slice(0, 240); }
+  function normalizeAiEndpoint(url) { url = norm(url); if (!url) return ''; if (/\/(chat\/completions|responses)$/i.test(url)) return url; return url.replace(/\/+$/, '') + '/chat/completions'; }
+  function extractAiText(data) {
+    if (data && Array.isArray(data.choices) && data.choices[0] && data.choices[0].message) {
+      var c = data.choices[0].message.content;
+      if (typeof c === 'string') return norm(c);
+      if (Array.isArray(c)) return norm(c.map(function (p) { return p && (p.text || p.output_text || '') || ''; }).join(''));
+    }
+    if (data && typeof data.output_text === 'string') return norm(data.output_text);
+    return '';
+  }
+  function translateViaAI(text, settings) {
+    if (!settings.aiEndpoint || !settings.aiModel || !settings.aiApiKey) return Promise.reject(new Error('AI translate not configured'));
+    var prompt = String(settings.aiPrompt || DEFAULT_AI_PROMPT).replace(/{{\s*sourceLang\s*}}/gi, settings.sourceLang || 'auto').replace(/{{\s*targetLang\s*}}/gi, settings.targetLang || 'zh');
+    return fetch(normalizeAiEndpoint(settings.aiEndpoint), {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + settings.aiApiKey },
+      body: JSON.stringify({ model: settings.aiModel, temperature: settings.temperature, messages: [{ role: 'system', content: prompt }, { role: 'user', content: text }] })
+    }).then(function (res) { return res.json().catch(function () { return {}; }).then(function (json) { if (!res.ok) throw new Error(json.error && json.error.message || 'AI translate failed'); return json; }); })
+      .then(function (json) { var out = extractAiText(json); if (!out) throw new Error('empty AI translation'); return out; });
+  }
+  function translateViaGoogle(text, settings) {
+    var url = 'https://translate.googleapis.com/translate_a/single?' + new URLSearchParams({ client: 'gtx', sl: settings.sourceLang || 'auto', tl: settings.targetLang || 'zh', dt: 't', q: text }).toString();
+    return fetch(url, { credentials: 'omit', cache: 'force-cache' }).then(function (res) { if (!res.ok) throw new Error('translate ' + res.status); return res.json(); }).then(function (data) {
+      var parts = Array.isArray(data && data[0]) ? data[0] : [];
+      return norm(parts.map(function (p) { return p && p[0] ? p[0] : ''; }).join(''));
+    });
+  }
+  function translateText(text) {
+    var clean = cleanDisplayText(text).replace(/https?:\/\/\S+/g, '').trim();
+    if (!clean) return Promise.resolve('');
+    var key = translateCacheKey(clean); var cached = safeJsonGet(key, null);
+    if (cached && cached.expiresAt > Date.now()) return Promise.resolve(cached.text || '');
+    var settings = getTranslateSettings();
+    var p = settings.provider === 'ai' ? translateViaAI(clean, settings) : translateViaGoogle(clean, settings);
+    return p.then(function (out) { out = norm(out); if (out) safeJsonSet(key, { text: out, expiresAt: Date.now() + CONFIG.translateCacheMs }); return out; });
+  }
+  function translateSlide(item, slide) {
+    var box = $('.pv-translated', slide); if (!box) return;
+    if (box.classList.contains('is-show') && box.dataset.loaded === '1') { box.classList.remove('is-show'); return; }
+    box.classList.add('is-show'); box.textContent = TEXT.translating;
+    translateText(item.text || item.title).then(function (out) { box.textContent = out || ''; box.dataset.loaded = out ? '1' : '0'; if (!out) box.classList.remove('is-show'); }).catch(function () { box.textContent = TEXT.translateFail; });
+  }
+  function translateElementText(text, target) {
+    target.classList.add('is-show'); target.textContent = TEXT.translating;
+    return translateText(text).then(function (out) { target.textContent = out || ''; if (!out) target.classList.remove('is-show'); }).catch(function () { target.textContent = TEXT.translateFail; });
+  }
+  function openTranslateSettings() {
+    var panel = $('.pv-translate-panel', state.root); var backdrop = $('.pv-modal-backdrop', state.root); var s = getTranslateSettings();
+    $('[name="sourceLang"]', panel).value = s.sourceLang || 'auto'; $('[name="targetLang"]', panel).value = s.targetLang || 'zh'; $('[name="provider"]', panel).value = s.provider || 'google';
+    $('[name="aiEndpoint"]', panel).value = s.aiEndpoint || ''; $('[name="aiModel"]', panel).value = s.aiModel || ''; $('[name="aiApiKey"]', panel).value = s.aiApiKey || ''; $('[name="aiPrompt"]', panel).value = s.aiPrompt || DEFAULT_AI_PROMPT;
+    panel.classList.toggle('is-ai', s.provider === 'ai');
+    $$('.pv-provider-tab', panel).forEach(function (t) { t.classList.toggle('is-active', (t.dataset.provider || 'google') === (s.provider || 'google')); });
+    panel.classList.add('is-open'); backdrop.classList.add('is-open');
+  }
+  function closeTranslateSettings() { $('.pv-translate-panel', state.root).classList.remove('is-open'); $('.pv-modal-backdrop', state.root).classList.remove('is-open'); }
 
-/* ===== v18 final polish =====
-   - Reduce TikTok iframe workload: JS now warms only one next video by default.
-   - Icon-only sound button.
-   - Outline comment bubble.
-   - Disable author/avatar navigation.
-   - Telegram-style comment input.
-   - Keep TikTok iframe from stealing taps.
-*/
-#peipe-video-app .pv-tiktok-frame {
-  pointer-events: none !important;
-}
+  function isAudioHref(href) { return RE.audioExt.test(String(href || '').split('?')[0]) || /[?&](?:haa8dur|dur|duration)=/i.test(String(href || '')); }
+  function parseDurationFromUrl(url) { try { var u = new URL(String(url || ''), location.origin); var raw = u.searchParams.get('haa8dur') || u.searchParams.get('dur') || u.searchParams.get('duration'); return Math.max(0, Number(raw || 0) || 0); } catch (e) { var m = String(url || '').match(/[?&](?:haa8dur|dur|duration)=(\d+(?:\.\d+)?)/i); return m ? Number(m[1]) || 0 : 0; } }
+  function extractAudiosFromContent(content) {
+    var out = []; var raw = String(content || '');
+    raw.replace(/<a[^>]+href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/ig, function (m, href, label) { if (isAudioHref(href) && !out.some(function (a) { return a.url === href; })) out.push({ url: href, label: norm(label.replace(/<[^>]*>/g, '')) || TEXT.voiceMsg }); return m; });
+    raw.replace(/\[([^\]]*)\]\(([^)]+)\)/g, function (m, label, href) { if (isAudioHref(href) && !out.some(function (a) { return a.url === href; })) out.push({ url: href, label: norm(label) || TEXT.voiceMsg }); return m; });
+    return out;
+  }
+  function voiceBars() { return [9,14,19,11,22,16,12,20,10,17,13,18].map(function (h) { return '<i style="height:' + h + 'px"></i>'; }).join(''); }
+  function renderVoiceCard(audio, cls) { var dur = parseDurationFromUrl(audio.url); return '<button type="button" class="pv-voice-card ' + (cls || '') + '" data-src="' + escapeHtml(audio.url) + '" data-duration="' + dur + '"><span class="pv-voice-play">▶</span><span class="pv-voice-wave">' + voiceBars() + '</span><span class="pv-voice-time">' + formatDuration(dur) + '</span></button>'; }
+  function toggleVoiceCard(card) {
+    if (!card) return; var src = card.dataset.src; if (!src) return;
+    var audio = card._pvAudio || new Audio(src); card._pvAudio = audio; audio.preload = 'metadata';
+    $$('.pv-voice-card.playing', state.root).forEach(function (node) { if (node !== card && node._pvAudio) { node._pvAudio.pause(); node.classList.remove('playing'); $('.pv-voice-play', node).textContent = '▶'; } });
+    audio.onloadedmetadata = function () { if (audio.duration && isFinite(audio.duration)) $('.pv-voice-time', card).textContent = formatDuration(audio.duration); };
+    audio.ontimeupdate = function () { if (!audio.paused) $('.pv-voice-time', card).textContent = formatDuration(audio.currentTime); };
+    audio.onended = function () { card.classList.remove('playing'); $('.pv-voice-play', card).textContent = '▶'; audio.currentTime = 0; };
+    if (audio.paused) { audio.play().then(function () { card.classList.add('playing'); $('.pv-voice-play', card).textContent = '❚❚'; }).catch(function () {}); }
+    else { audio.pause(); card.classList.remove('playing'); $('.pv-voice-play', card).textContent = '▶'; }
+  }
 
-#peipe-video-app .pv-slide-item.is-video .pv-tap-zone {
-  right: 72px !important;
-  bottom: max(72px, calc(var(--pv-bottom-safe) + 66px)) !important;
-  touch-action: pan-y !important;
-}
+  function normalizeAuthor(user, fallback) {
+    user = user || {}; fallback = fallback || {};
+    var uid = String(user.uid || user.userId || user.userid || fallback.uid || '');
+    var username = norm(user.displayname || user.displayName || user.username || fallback.username || fallback.displayname || fallback.userslug || '用户');
+    var userslug = String(user.userslug || fallback.userslug || username || '').replace(/^@/, '');
+    var picture = user.picture || user.uploadedpicture || user.avatar || fallback.picture || fallback.uploadedpicture || '';
+    return { uid: uid, username: username, userslug: userslug, picture: picture };
+  }
+  function fitCommentsPanelHeight() {
+    var panel = $('.pv-comments-panel', state.root);
+    if (!panel || !panel.classList.contains('is-open')) return;
+    window.requestAnimationFrame(function () {
+      var head = $('.pv-panel-head', panel);
+      var grip = $('.pv-panel-grip', panel);
+      var list = $('.pv-comments-list', panel);
+      var reply = $('.pv-reply-bar', panel);
+      var voice = $('.pv-comment-voice-preview', panel);
+      var rec = $('.pv-comment-record-panel', panel);
+      var send = $('.pv-comment-send-row', panel);
+      var extra = 30;
+      var content = extra +
+        (grip ? grip.offsetHeight : 0) +
+        (head ? head.offsetHeight : 0) +
+        (reply && reply.classList.contains('is-open') ? reply.offsetHeight : 0) +
+        (voice && voice.classList.contains('is-open') ? voice.offsetHeight : 0) +
+        (rec && rec.classList.contains('is-open') ? rec.offsetHeight : 0) +
+        (send ? send.offsetHeight : 0) +
+        Math.min(list ? list.scrollHeight : 0, Math.round(window.innerHeight * 0.56));
+      var minH = Math.min(Math.round(window.innerHeight * 0.30), 260);
+      var maxH = Math.min(Math.round(window.innerHeight * 0.88), 760);
+      var h = Math.max(minH, Math.min(maxH, content));
+      panel.style.setProperty('height', h + 'px', 'important');
+      panel.style.setProperty('max-height', maxH + 'px', 'important');
+      if (list) list.style.setProperty('max-height', Math.max(96, h - ((grip ? grip.offsetHeight : 0) + (head ? head.offsetHeight : 0) + (reply && reply.classList.contains('is-open') ? reply.offsetHeight : 0) + (voice && voice.classList.contains('is-open') ? voice.offsetHeight : 0) + (rec && rec.classList.contains('is-open') ? rec.offsetHeight : 0) + (send ? send.offsetHeight : 0) + 42)) + 'px', 'important');
+    });
+  }
+  function openComments(item) {
+    state.comments.item = item; state.comments.replyTo = null;
+    var panel = $('.pv-comments-panel', state.root);
+    $('.pv-drawer-backdrop', state.root).classList.add('is-open'); panel.classList.add('is-open'); panel.style.transform = '';
+    $('.pv-comments-title', panel).textContent = TEXT.comments + ' ' + formatCount(item.counts.comments);
+    $('.pv-comments-list', panel).innerHTML = '<div class="pv-meta">加载中...</div>';
+    $('.pv-comment-input', panel).placeholder = TEXT.commentPlaceholder; updateCommentActionButton(); fitCommentsPanelHeight();
+    $('.pv-reply-bar', panel).classList.remove('is-open');
+    apiFetch('/api/topic/' + encodeURIComponent(item.tid)).then(function (json) {
+      state.comments.posts = Array.isArray(json.posts) ? json.posts.slice(1) : [];
+      renderComments(state.comments.posts);
+    }).catch(function () { $('.pv-comments-list', panel).innerHTML = '<div class="pv-meta">加载失败，<a href="' + item.href + '">' + TEXT.openTopic + '</a></div>'; fitCommentsPanelHeight(); });
+  }
+  function closeComments() { stopCommentRecording(true); setCommentVoice(null, 0); var p = $('.pv-comments-panel', state.root); if (p) { p.classList.remove('is-open'); p.style.height = ''; } $('.pv-drawer-backdrop', state.root).classList.remove('is-open'); }
+  function renderComments(posts) {
+    var list = $('.pv-comments-list', state.root);
+    if (!posts.length) { list.innerHTML = '<div class="pv-meta pv-empty-comments">' + TEXT.noComments + '</div>'; fitCommentsPanelHeight(); return; }
+    list.innerHTML = posts.map(function (post) {
+      var user = normalizeAuthor(post.user || post, {}); var content = post.content || post.raw || '';
+      var div = document.createElement('div'); div.innerHTML = content;
+      var text = cleanDisplayText(div.textContent || content); var audios = extractAudiosFromContent(content);
+      var avatar = user.picture ? '<img src="' + escapeHtml(user.picture) + '" alt="avatar">' : '<img alt="avatar">';
+      return '<div class="pv-comment" data-pid="' + escapeHtml(post.pid || '') + '" data-username="' + escapeHtml(user.username || '用户') + '">' + avatar + '<div class="pv-comment-body"><div class="pv-comment-name">' + escapeHtml(user.username || '用户') + '</div>' +
+        (text ? '<div class="pv-comment-text">' + escapeHtml(text) + '</div>' : '') + audios.map(function (a) { return renderVoiceCard(a, ''); }).join('') + '<div class="pv-comment-translated"></div><div class="pv-comment-actions"><button type="button" class="pv-comment-reply">' + TEXT.replyTo + '</button><button type="button" class="pv-comment-translate" aria-label="' + TEXT.translate + '" title="' + TEXT.translate + '">' + iconTranslate() + '</button></div></div></div>';
+    }).join('');
+    fitCommentsPanelHeight();
+  }
+  function setReplyTarget(commentEl) {
+    var username = commentEl.dataset.username || '用户'; var pid = commentEl.dataset.pid || '';
+    state.comments.replyTo = { username: username, pid: pid };
+    var panel = $('.pv-comments-panel', state.root);
+    $('.pv-reply-bar', panel).classList.add('is-open'); $('.pv-reply-name', panel).textContent = '@' + username;
+    $('.pv-comment-input', panel).placeholder = TEXT.replyTo + ' @' + username;
+    $('.pv-comment-input', panel).focus();
+    fitCommentsPanelHeight();
+  }
+  function clearReplyTarget() { state.comments.replyTo = null; var panel = $('.pv-comments-panel', state.root); $('.pv-reply-bar', panel).classList.remove('is-open'); $('.pv-comment-input', panel).placeholder = TEXT.commentPlaceholder; updateCommentActionButton(); fitCommentsPanelHeight(); }
+  function setCommentVoice(blob, duration) {
+    if (state.comments.voiceUrl) { try { URL.revokeObjectURL(state.comments.voiceUrl); } catch (e) {} }
+    state.comments.voiceBlob = blob || null;
+    state.comments.voiceDuration = Math.max(0, Math.round(Number(duration) || 0));
+    state.comments.voiceUrl = blob ? URL.createObjectURL(blob) : '';
+    var wrap = $('.pv-comment-voice-preview', state.root);
+    if (!wrap) return;
+    wrap.innerHTML = blob ? renderVoiceCard({ url: state.comments.voiceUrl }, 'is-preview') + '<button type="button" class="pv-comment-voice-remove">×</button>' : '';
+    wrap.classList.toggle('is-open', !!blob); updateCommentActionButton(); fitCommentsPanelHeight();
+  }
+  function recorderMime() { if (!window.MediaRecorder) return ''; return ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/ogg'].find(function (t) { return MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t); }) || ''; }
+  function toggleCommentRecording() {
+    var btn = $('.pv-comment-action-btn', state.root);
+    if (state.comments.mediaRecorder && state.comments.mediaRecorder.state === 'recording') { stopCommentRecording(false); return; }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) return alertError('当前浏览器不支持录音');
+    navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } }).catch(function () { return navigator.mediaDevices.getUserMedia({ audio: true }); }).then(function (stream) {
+      state.comments.stream = stream; state.comments.chunks = []; state.comments.startAt = Date.now();
+      var mime = recorderMime(); var rec = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 16000 } : { audioBitsPerSecond: 16000 }); state.comments.mediaRecorder = rec;
+      rec.ondataavailable = function (e) { if (e.data && e.data.size) state.comments.chunks.push(e.data); };
+      rec.onstop = function () { var dur = Math.max(1, Math.round((Date.now() - state.comments.startAt) / 1000)); if (state.comments.stream) state.comments.stream.getTracks().forEach(function (t) { t.stop(); }); clearInterval(state.comments.timer); btn.classList.remove('recording'); $('.pv-comment-record-panel', state.root).classList.remove('is-open'); updateCommentActionButton(); if (state.comments.chunks.length) setCommentVoice(new Blob(state.comments.chunks, { type: state.comments.chunks[0].type || mime || 'audio/webm' }), dur); };
+      rec.start(250); btn.classList.add('recording'); $('.pv-comment-record-panel', state.root).classList.add('is-open'); state.comments.timer = setInterval(function () { var sec = Math.max(0, Math.floor((Date.now() - state.comments.startAt) / 1000)); var el = $('.pv-record-time', state.root); if (el) el.textContent = formatDuration(sec); }, 250);
+    }).catch(function () { alertError('麦克风权限未开启'); });
+  }
+  function stopCommentRecording() { var rec = state.comments.mediaRecorder; if (rec && rec.state === 'recording') { try { rec.stop(); } catch (e) {} } if (state.comments.stream) state.comments.stream.getTracks().forEach(function (t) { t.stop(); }); clearInterval(state.comments.timer); var panel = $('.pv-comment-record-panel', state.root); if (panel) panel.classList.remove('is-open'); updateCommentActionButton(); }
+  function updateCommentActionButton() { var btn = $('.pv-comment-action-btn', state.root); if (!btn) return; var input = $('.pv-comment-input', state.root); var hasText = !!norm(input && input.value); var recording = state.comments.mediaRecorder && state.comments.mediaRecorder.state === 'recording'; var hasVoice = !!state.comments.voiceBlob; btn.classList.toggle('is-send', hasText || hasVoice); btn.classList.toggle('recording', !!recording); btn.innerHTML = (hasText || hasVoice) ? iconSend() : (recording ? '<span class="pv-stop-dot"></span>' : iconMic()); }
+  function handleCommentAction() { var input = $('.pv-comment-input', state.root); if ((input && norm(input.value)) || state.comments.voiceBlob) submitComment(); else toggleCommentRecording(); }
+  function appendDurationParam(url, seconds) { try { var u = new URL(url, location.origin); u.searchParams.set('haa8dur', String(Math.max(1, seconds || 1))); return u.origin === location.origin ? u.pathname + u.search + u.hash : u.toString(); } catch (e) { return url + (String(url).indexOf('?') === -1 ? '?' : '&') + 'haa8dur=' + encodeURIComponent(seconds || 1); } }
+  function submitComment() {
+    var item = state.comments.item; var input = $('.pv-comment-input', state.root); var text = norm(input.value);
+    if (!item || (!text && !state.comments.voiceBlob)) return; if (!isLoggedIn()) return alertError(TEXT.loginFirst);
+    var btn = $('.pv-comment-action-btn', state.root); if (btn) btn.disabled = true;
+    Promise.resolve().then(function () {
+      var content = state.comments.replyTo ? ('@' + state.comments.replyTo.username + ' ' + text) : text;
+      if (!state.comments.voiceBlob) return content;
+      var ext = /ogg/i.test(state.comments.voiceBlob.type) ? 'ogg' : 'webm';
+      var file = new File([state.comments.voiceBlob], 'comment-voice-' + Date.now() + '.' + ext, { type: state.comments.voiceBlob.type || 'audio/webm' });
+      return uploadToNodeBB(file).then(function (url) { return (content ? content + '\n' : '') + '[' + TEXT.voiceMsg + ' · ' + formatDuration(state.comments.voiceDuration || 1) + '](' + appendDurationParam(url, state.comments.voiceDuration || 1) + ')'; });
+    }).then(function (content) {
+      var payload = { content: content };
+      if (state.comments.replyTo && state.comments.replyTo.pid) payload.toPid = state.comments.replyTo.pid;
+      return apiFetch('/api/v3/topics/' + encodeURIComponent(item.tid), { method: 'POST', headers: { 'content-type': 'application/json; charset=utf-8', 'x-csrf-token': csrfToken() }, body: JSON.stringify(payload) });
+    }).then(function () { input.value = ''; clearReplyTarget(); setCommentVoice(null, 0); updateCommentActionButton(); item.counts.comments += 1; updateCountUi(item); openComments(item); })
+      .catch(function () { alertError(TEXT.commentFail); window.open(item.href, '_blank'); })
+      .finally(function () { if (btn) btn.disabled = false; });
+  }
+  function updateCountUi(item) { var slide = findSlide(state.list.indexOf(item)); if (!slide) return; var btn = $('.pv-comment-btn span:last-child', slide); if (btn) btn.textContent = formatCount(item.counts.comments); }
+  function translateComment(commentEl) { var text = $('.pv-comment-text', commentEl); var box = $('.pv-comment-translated', commentEl); if (!text || !box) return; translateElementText(text.textContent || '', box); }
+  function translateCommentInput() { var input = $('.pv-comment-input', state.root); var text = norm(input.value); if (!text) return; translateText(text).then(function (out) { if (out) { input.value = out; updateCommentActionButton(); } }).catch(function () { alertError(TEXT.translateFail); }); }
+  function translateComposeInput() { var panel = $('.pv-compose-panel', state.root); var input = panel && $('textarea', panel); var text = norm(input && input.value); if (!text || !input) return; var btn = $('.pv-compose-translate', panel); if (btn) btn.disabled = true; translateText(text).then(function (out) { if (out) input.value = out; }).catch(function () { alertError(TEXT.translateFail); }).finally(function () { if (btn) btn.disabled = false; }); }
 
-#peipe-video-app .pv-avatar-link,
-#peipe-video-app .pv-username {
-  pointer-events: none !important;
-  cursor: default !important;
-}
+  function openViewer(images, index) {
+    if (!images || !images.length) return;
+    state.viewer.images = images.slice(0, CONFIG.imageMax);
+    state.viewer.index = Math.max(0, Math.min(state.viewer.images.length - 1, Number(index || 0)));
+    var viewer = $('.pv-viewer', state.root);
+    viewer.classList.add('is-open'); updateViewer();
+  }
+  function updateViewer() {
+    var viewer = $('.pv-viewer', state.root);
+    var wrapper = $('.pv-viewer .swiper-wrapper', state.root);
+    wrapper.innerHTML = state.viewer.images.map(function (src, i) { return '<div class="swiper-slide"><img src="' + escapeHtml(src) + '" alt="image ' + (i + 1) + '"></div>'; }).join('');
+    if (state.viewer.swiper) { try { state.viewer.swiper.destroy(true, true); } catch (e) {} state.viewer.swiper = null; }
+    if (window.Swiper) {
+      state.viewer.swiper = new window.Swiper($('.pv-viewer-swiper', viewer), {
+        direction: 'horizontal', slidesPerView: 1, speed: 220, initialSlide: state.viewer.index,
+        pagination: { el: $('.pv-viewer-pagination', viewer), clickable: false },
+        on: { slideChange: function (sw) { state.viewer.index = sw.activeIndex || 0; } }
+      });
+    }
+  }
+  function closeViewer() { $('.pv-viewer', state.root).classList.remove('is-open'); }
 
-#peipe-video-app .pv-toolbar {
-  gap: 9px !important;
-  bottom: max(176px, calc(var(--pv-bottom-safe) + 168px)) !important;
-}
+  function showComposeFabInitial() { var fab = $('.pv-compose-fab', state.root); if (fab) fab.classList.remove('is-hidden'); }
+  function hideComposerFab() { var fab = $('.pv-compose-fab', state.root); if (fab) fab.classList.add('is-hidden'); }
+  function openCompose() { pauseSlide(state.index); $('.pv-drawer-backdrop', state.root).classList.add('is-open'); $('.pv-compose-panel', state.root).classList.add('is-open'); hideComposerFab(); }
+  function closeCompose() { $('.pv-compose-panel', state.root).classList.remove('is-open'); $('.pv-drawer-backdrop', state.root).classList.remove('is-open'); }
+  function resetCompose() { var p = $('.pv-compose-panel', state.root); $('textarea', p).value = ''; setPendingImages([]); $('.pv-meta', p).textContent = ''; }
 
-#peipe-video-app .pv-sound-label {
-  display: none !important;
-}
+  function fileExt(file) {
+    var name = String(file && file.name || '').toLowerCase();
+    var m = name.match(/\.([a-z0-9]+)$/);
+    return m ? m[1] : '';
+  }
+  function mimeFromFile(file) {
+    var type = String(file && file.type || '').toLowerCase();
+    if (/^image\//.test(type)) return type;
+    var ext = fileExt(file);
+    if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+    if (ext === 'png') return 'image/png';
+    if (ext === 'webp') return 'image/webp';
+    if (ext === 'gif') return 'image/gif';
+    if (ext === 'svg') return 'image/svg+xml';
+    if (ext === 'heic') return 'image/heic';
+    if (ext === 'heif') return 'image/heif';
+    return type || '';
+  }
+  function isImageFile(file) {
+    if (!file) return false;
+    var type = String(file.type || '').toLowerCase();
+    var ext = fileExt(file);
+    if (/^(jpg|jpeg|png|webp|gif|svg|heic|heif)$/i.test(ext)) return true;
+    return /^image\//.test(type);
+  }
+  function isHeicFile(file) {
+    var type = mimeFromFile(file);
+    var ext = fileExt(file);
+    return /heic|heif/i.test(type) || /^(heic|heif)$/i.test(ext);
+  }
+  function imageConfig(opts) {
+    return deepMerge({}, {
+      maxSide: 1080,
+      maxSizeMB: 0.09,
+      quality: 0.58,
+      minCompressBytes: 70 * 1024,
+      useWebp: true,
+      qualities: [0.58, 0.50, 0.44, 0.38, 0.32, 0.26, 0.22]
+    }, CONFIG.imageConfig || {}, opts || {});
+  }
+  function imageTargetBytes(cfg) {
+    return Math.max(30 * 1024, Math.round(Number(cfg.maxSizeMB || 0.09) * 1024 * 1024));
+  }
+  function extForMime(type) {
+    type = String(type || '').toLowerCase();
+    if (type === 'image/webp') return '.webp';
+    if (type === 'image/png') return '.png';
+    return '.jpg';
+  }
+  function canCanvasEncode(type) {
+    return new Promise(function (resolve) {
+      try {
+        var c = document.createElement('canvas');
+        c.width = 1;
+        c.height = 1;
+        if (!c.toBlob) return resolve(false);
+        c.toBlob(function (b) { resolve(!!b && b.type === type); }, type, 0.8);
+      } catch (e) { resolve(false); }
+    });
+  }
+  function loadImageFromFile(file) {
+    return new Promise(function (resolve, reject) {
+      if (!file) return reject(new Error('empty file'));
+      if (window.createImageBitmap) {
+        window.createImageBitmap(file).then(function (bitmap) {
+          resolve({
+            width: bitmap.width,
+            height: bitmap.height,
+            draw: function (ctx, w, h) { ctx.drawImage(bitmap, 0, 0, w, h); },
+            close: function () { try { bitmap.close && bitmap.close(); } catch (e) {} }
+          });
+        }).catch(function () {
+          var img = new Image();
+          var url = URL.createObjectURL(file);
+          img.onload = function () {
+            URL.revokeObjectURL(url);
+            resolve({
+              width: img.naturalWidth || img.width,
+              height: img.naturalHeight || img.height,
+              draw: function (ctx, w, h) { ctx.drawImage(img, 0, 0, w, h); },
+              close: function () {}
+            });
+          };
+          img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('decode failed')); };
+          img.src = url;
+        });
+        return;
+      }
+      var image = new Image();
+      var objectUrl = URL.createObjectURL(file);
+      image.onload = function () {
+        URL.revokeObjectURL(objectUrl);
+        resolve({
+          width: image.naturalWidth || image.width,
+          height: image.naturalHeight || image.height,
+          draw: function (ctx, w, h) { ctx.drawImage(image, 0, 0, w, h); },
+          close: function () {}
+        });
+      };
+      image.onerror = function () { URL.revokeObjectURL(objectUrl); reject(new Error('decode failed')); };
+      image.src = objectUrl;
+    });
+  }
+  function canvasToBlob(canvas, type, quality) {
+    return new Promise(function (resolve) {
+      canvas.toBlob(function (blob) { resolve(blob); }, type, quality);
+    });
+  }
+  function makeCompressedFile(original, blob, type) {
+    if (!blob || !blob.size) return original;
+    var base = String(original && original.name || ('image-' + Date.now())).replace(/\.[^.]+$/, '');
+    try { return new File([blob], base + extForMime(type), { type: type, lastModified: Date.now() }); }
+    catch (e) { blob.name = base + extForMime(type); return blob; }
+  }
+  function compressImageFile(file) {
+    if (!file || file.size === 0) return Promise.reject(new Error(TEXT.imageOnly));
+    if (!isImageFile(file)) return Promise.reject(new Error(TEXT.imageOnly));
 
-#peipe-video-app .pv-sound-btn {
-  min-height: 36px !important;
-}
+    var type = mimeFromFile(file);
+    var ext = fileExt(file);
+    var heic = isHeicFile(file);
+    if (/gif|svg/i.test(type) || /^(gif|svg)$/i.test(ext)) return Promise.reject(new Error(TEXT.imageUnsupported));
 
-#peipe-video-app .pv-sound-btn .pv-action-icon {
-  width: 31px !important;
-  height: 31px !important;
-}
+    var cfg = imageConfig();
+    var size = Number(file.size || 0);
+    if (!heic && size > 0 && size < Number(cfg.minCompressBytes || 0)) return Promise.resolve(file);
 
-#peipe-video-app .pv-sound-svg {
-  width: 24px !important;
-  height: 24px !important;
-  fill: none !important;
-  stroke: currentColor !important;
-  stroke-width: 2.15px !important;
-  stroke-linecap: round !important;
-  stroke-linejoin: round !important;
-}
+    return canCanvasEncode('image/webp').then(function (webp) {
+      var targetType = cfg.useWebp && webp ? 'image/webp' : 'image/jpeg';
+      return loadImageFromFile(file).then(function (img) {
+        var w = img.width || 1;
+        var h = img.height || 1;
+        var maxSide = Number(cfg.maxSide || 1080);
+        var scale = Math.min(1, maxSide / Math.max(w, h));
+        var canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(w * scale));
+        canvas.height = Math.max(1, Math.round(h * scale));
+        var ctx = canvas.getContext('2d');
+        if (!ctx || !canvas.toBlob) throw new Error(TEXT.imageConvertFail);
+        img.draw(ctx, canvas.width, canvas.height);
+        if (img.close) img.close();
 
-#peipe-video-app .pv-comment-svg path {
-  fill: rgba(0,0,0,0) !important;
-  stroke: rgba(255,255,255,.98) !important;
-  stroke-width: 3.1px !important;
-  stroke-linejoin: round !important;
-  paint-order: stroke fill !important;
-}
+        var targetBytes = imageTargetBytes(cfg);
+        var qualities = Array.isArray(cfg.qualities) && cfg.qualities.length ? cfg.qualities : [cfg.quality || 0.58, 0.50, 0.44, 0.38, 0.32, 0.26, 0.22];
+        var best = null;
+        var chain = Promise.resolve();
+        qualities.forEach(function (q) {
+          chain = chain.then(function () {
+            if (best && best.size <= targetBytes) return best;
+            return canvasToBlob(canvas, targetType, Number(q)).then(function (blob) {
+              if (blob && blob.size) best = blob;
+              return best;
+            });
+          });
+        });
+        return chain.then(function () {
+          if (!best || !best.size) throw new Error(TEXT.imageConvertFail);
+          if (!heic && size && best.size >= size * 0.98) return file;
+          return makeCompressedFile(file, best, targetType);
+        });
+      });
+    }).catch(function (err) {
+      console.warn('[peipe-video] image compression/convert failed', err);
+      if (heic) throw new Error(TEXT.imageConvertFail);
+      throw new Error((err && err.message) || TEXT.imageCompressFail);
+    });
+  }
+  function compressImageFiles(files) {
+    files = Array.from(files || []).filter(function (file) { return file && file.size !== 0; }).slice(0, CONFIG.imageMax);
+    if (!files.length) return Promise.reject(new Error(TEXT.imageOnly));
+    var bad = files.find(function (file) { return !isImageFile(file); });
+    if (bad) return Promise.reject(new Error(TEXT.imageOnly));
+    var p = Promise.resolve([]);
+    files.forEach(function (file) {
+      p = p.then(function (out) {
+        return compressImageFile(file).then(function (nextFile) {
+          out.push(nextFile);
+          return out;
+        });
+      });
+    });
+    return p;
+  }
+  function setPendingImages(files) {
+    state.compose.imageUrls.forEach(function (url) { try { URL.revokeObjectURL(url); } catch (e) {} });
+    var list = Array.from(files || []).filter(function (f) { return f && isImageFile(f); }).slice(0, CONFIG.imageMax);
+    state.compose.imageFiles = list; state.compose.imageUrls = list.map(function (f) { return URL.createObjectURL(f); });
+    $('.pv-preview-images', state.root).innerHTML = state.compose.imageUrls.map(function (u) { return '<img src="' + u + '" alt="preview">'; }).join('');
+  }
+  function uploadToNodeBB(file) {
+    var form = new FormData(); form.append('files[]', file); form.append('cid', String(CONFIG.cid));
+    return fetch(rel('/api/post/upload'), { method: 'POST', credentials: 'same-origin', headers: { 'x-csrf-token': csrfToken(), 'x-requested-with': 'XMLHttpRequest' }, body: form })
+      .then(function (res) { return res.json().catch(function () { return {}; }).then(function (json) { if (!res.ok) throw new Error(json.error || json.message || 'upload failed'); return extractUploadUrl(json); }); });
+  }
+  function extractUploadUrl(payload) {
+    var q = [payload], seen = new Set();
+    while (q.length) {
+      var cur = q.shift();
+      if (!cur || seen.has(cur)) continue;
+      if (typeof cur === 'string' && (/^(https?:)?\//i.test(cur) || /^\/assets\//i.test(cur))) return cur;
+      if (typeof cur !== 'object') continue;
+      seen.add(cur);
+      if (Array.isArray(cur)) q.push.apply(q, cur); else Object.keys(cur).forEach(function (k) { q.push(cur[k]); });
+    }
+    throw new Error('upload url missing');
+  }
+  function buildTitle(text) { var clean = norm(String(text || '').replace(RE.tiktokShort, '').replace(RE.tiktokGlobal, '').replace(RE.tiktokToken, '').replace(/https?:\/\/vt\.?/ig, '').replace(/!\[[^\]]*\]\([^)]+\)/g, '').replace(/\[[^\]]*\]\([^)]+\)/g, '')); return clean ? clean.slice(0, 80) : '动态'; }
+  function sendTopic() {
+    if (!isLoggedIn()) return alertError(TEXT.loginFirst);
+    var panel = $('.pv-compose-panel', state.root); var textarea = $('textarea', panel); var text = norm(textarea.value);
+    if (!text && !state.compose.imageFiles.length) return alertError(TEXT.enterSomething);
+    var btn = $('.pv-compose-submit', panel); var meta = $('.pv-meta', panel); btn.disabled = true; btn.textContent = TEXT.publishing;
+    var lines = []; if (text) lines.push(text);
+    Promise.resolve().then(function () {
+      var p = Promise.resolve();
+      state.compose.imageFiles.forEach(function (file, i) {
+        p = p.then(function () { meta.textContent = TEXT.uploadImage + ' ' + (i + 1) + '/' + state.compose.imageFiles.length; return uploadToNodeBB(file).then(function (url) { lines.push('![image](' + url + ')'); }); });
+      });
+      return p;
+    }).then(function () {
+      return apiFetch('/api/v3/topics', { method: 'POST', headers: { 'content-type': 'application/json; charset=utf-8', 'x-csrf-token': csrfToken() }, body: JSON.stringify({ cid: Number(CONFIG.cid), title: buildTitle(text), content: lines.join('\n\n'), tags: [] }) });
+    }).then(function () { alertSuccess(TEXT.publishOk); resetCompose(); closeCompose(); loadFeed(true); })
+      .catch(function (err) { console.warn(err); alertError(err.message || TEXT.publishFail); })
+      .finally(function () { btn.disabled = false; btn.textContent = TEXT.send; meta.textContent = ''; });
+  }
 
-#peipe-video-app .pv-comment-svg circle {
-  fill: rgba(255,255,255,.98) !important;
-  stroke: none !important;
-}
+  function handleTap(e, index) {
+    var item = state.list[index];
+    if (!item || !(item.tiktoks && item.tiktoks[0])) return;
+    clearTimeout(state.lastTap.timer);
+    var player = Array.from(state.players.values()).find(function (p) { return p.index === index; });
+    if (state.justUnlockedSoundAt && Date.now() - state.justUnlockedSoundAt < 450) {
+      state.manualPausedKey = '';
+      state.soundMuted = false;
+      safeJsonSet('pv-sound-muted', false);
+      updateSoundUi();
+      if (player) {
+        player.wantPlay = true;
+        tryPlayPlayer(player, true);
+      } else {
+        playSlide(index, true);
+      }
+      return;
+    }
+    if (player && (player.status === 'playing' || player.wantPlay) && state.manualPausedKey !== player.key) {
+      pauseSlide(index, false, true);
+    } else {
+      state.hasInteracted = true;
+      state.soundUnlocked = true;
+      state.soundMuted = false;
+      state.manualPausedKey = '';
+      safeJsonSet('pv-sound-unlocked', true);
+      safeJsonSet('pv-sound-muted', false);
+      updateSoundUi();
+      playSlide(index, true);
+    }
+  }
+  function unlockSoundFromGesture() {
+    var wasUnlocked = !!state.soundUnlocked;
+    state.hasInteracted = true;
+    state.soundUnlocked = true;
+    state.soundMuted = false;
+    safeJsonSet('pv-sound-unlocked', true);
+    safeJsonSet('pv-sound-muted', false);
+    updateSoundUi();
+    if (!wasUnlocked) {
+      state.justUnlockedSoundAt = Date.now();
+      var player = currentPlayer();
+      if (player) {
+        state.manualPausedKey = '';
+        player.wantPlay = true;
+        tryPlayPlayer(player, true);
+      }
+    }
+  }
 
-#peipe-video-app .pv-follow-plus {
-  top: -11px !important;
-  bottom: auto !important;
-  width: 20px !important;
-  height: 20px !important;
-  min-width: 20px !important;
-  border: 2px solid rgba(255,255,255,.96) !important;
-  line-height: 16px !important;
-}
+  function buildChrome() {
+    state.root.innerHTML = '' +
+      '<div class="pv-page pv-page-active">' +
+        '<div class="pv-swiper swiper"><div class="swiper-wrapper"></div></div>' +
+        '<button type="button" class="pv-compose-fab">+</button>' +
+        '<div class="pv-drawer-backdrop"></div><div class="pv-modal-backdrop"></div>' +
+        '<section class="pv-compose-panel" role="dialog"><div class="pv-panel-head"><div class="pv-panel-title">' + TEXT.publish + '</div><button type="button" class="pv-close pv-compose-close">×</button></div><textarea class="pv-compose-textarea" placeholder="' + TEXT.placeholder + '"></textarea><div class="pv-preview-images"></div><div class="pv-compose-tools"><input type="file" class="pv-image-input" accept="image/*,.jpg,.jpeg,.png,.webp,.heic,.heif" multiple hidden><button type="button" class="pv-tool pv-image-btn">' + TEXT.chooseImage + '</button><button type="button" class="pv-tool pv-compose-translate">' + iconTranslate() + ' ' + TEXT.translate + '</button><button type="button" class="pv-primary pv-compose-submit">' + TEXT.send + '</button></div><div class="pv-meta"></div></section>' +
+        '<section class="pv-comments-panel" role="dialog"><div class="pv-panel-grip"></div><div class="pv-panel-head pv-comments-drag"><div class="pv-panel-title pv-comments-title">' + TEXT.comments + '</div><button type="button" class="pv-close pv-comments-close">×</button></div><div class="pv-comments-list"></div><div class="pv-reply-bar"><span>' + TEXT.replyTo + ' </span><b class="pv-reply-name"></b><button type="button" class="pv-reply-cancel">×</button></div><div class="pv-comment-voice-preview"></div><div class="pv-comment-record-panel"><div class="pv-record-pulse"></div><div class="pv-record-bars"><i></i><i></i><i></i><i></i><i></i></div><span class="pv-record-time">00:00</span><span class="pv-record-tip">正在录音，点右侧按钮停止</span></div><div class="pv-comment-send-row"><div class="pv-comment-input-wrap"><button type="button" class="pv-comment-input-translate" aria-label="' + TEXT.translate + '" title="' + TEXT.translate + '">' + iconTranslate() + '</button><input class="pv-comment-input" placeholder="' + TEXT.commentPlaceholder + '"><button type="button" class="pv-comment-action-btn" aria-label="语音或发送">' + iconMic() + '</button></div></div></section>' +
+        '<section class="pv-translate-panel" role="dialog"><div class="pv-panel-head"><div class="pv-panel-title">' + TEXT.translateSettings + '</div><button type="button" class="pv-close pv-translate-close">×</button></div><div class="pv-provider-tabs"><button type="button" class="pv-provider-tab" data-provider="google">' + TEXT.google + '</button><button type="button" class="pv-provider-tab" data-provider="ai">' + TEXT.ai + '</button><input type="hidden" name="provider" value="google"></div><div class="pv-lang-row"><label><span>' + TEXT.sourceLang + '</span><select name="sourceLang">' + langOptions(true) + '</select></label><span class="pv-lang-arrow">⇄</span><label><span>' + TEXT.targetLang + '</span><select name="targetLang">' + langOptions(false) + '</select></label></div><div class="pv-ai-settings"><label>' + TEXT.aiEndpoint + '<input name="aiEndpoint" placeholder="https://api.example.com/v1"></label><label>' + TEXT.aiModel + '<input name="aiModel" placeholder="gpt-4.1-mini / qwen / deepseek"></label><label>' + TEXT.aiApiKey + '<input name="aiApiKey" type="password" placeholder="API Key"></label><label>' + TEXT.aiPrompt + '<textarea name="aiPrompt" rows="4"></textarea></label></div><div class="pv-translate-actions"><button type="button" class="pv-primary pv-translate-save">' + TEXT.save + '</button></div></section>' +
+        '<div class="pv-viewer"><div class="pv-viewer-swiper swiper"><div class="swiper-wrapper"></div><div class="pv-viewer-pagination"></div></div><button class="pv-viewer-close" aria-label="关闭">×</button></div>' +
+      '</div>';
+    bindChrome();
+  }
+  function bindLongPress(el, cb) {
+    if (!el) return;
+    var timer = 0, sx = 0, sy = 0;
+    el.addEventListener('pointerdown', function (e) { sx = e.clientX; sy = e.clientY; clearTimeout(timer); timer = setTimeout(function () { cb(e); timer = 0; }, 560); });
+    el.addEventListener('pointermove', function (e) { if (Math.hypot(e.clientX - sx, e.clientY - sy) > 12) { clearTimeout(timer); timer = 0; } });
+    ['pointerup','pointercancel','pointerleave'].forEach(function (n) { el.addEventListener(n, function () { clearTimeout(timer); timer = 0; }); });
+  }
+  function bindChrome() {
+    state.root.addEventListener('click', onRootClick, true);
+    state.root.addEventListener('pointerdown', onRootPointerDown, true);
+    state.root.addEventListener('pointermove', onRootPointerMove, true);
+    state.root.addEventListener('pointerup', onRootPointerUp, true);
+    state.root.addEventListener('pointercancel', onRootPointerCancel, true);
+    $('.pv-compose-fab', state.root).addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); openCompose(); });
+    $('.pv-compose-close', state.root).addEventListener('click', closeCompose);
+    $('.pv-drawer-backdrop', state.root).addEventListener('click', function () { closeCompose(); closeComments(); closeTranslateSettings(); });
+    $('.pv-image-btn', state.root).addEventListener('click', function () { $('.pv-image-input', state.root).click(); });
+    $('.pv-image-input', state.root).addEventListener('change', function (e) {
+      var files = Array.from(e.target.files || []).slice(0, CONFIG.imageMax);
+      var meta = $('.pv-meta', state.root);
+      e.target.value = '';
+      if (!files.length) return;
+      if (files.find(function (f) { return !isImageFile(f); })) return alertError(TEXT.imageOnly);
+      if (meta) meta.textContent = TEXT.compressing;
+      compressImageFiles(files).then(function (nextFiles) {
+        setPendingImages(nextFiles);
+      }).catch(function (err) {
+        setPendingImages([]);
+        alertError((err && err.message) || TEXT.imageCompressFail);
+      }).finally(function () {
+        if (meta) meta.textContent = '';
+      });
+    });
+    $('.pv-compose-submit', state.root).addEventListener('click', sendTopic);
+    $('.pv-compose-translate', state.root).addEventListener('click', translateComposeInput);
+    $('.pv-comments-close', state.root).addEventListener('click', closeComments);
+    $('.pv-reply-cancel', state.root).addEventListener('click', clearReplyTarget);
+    $('.pv-comment-action-btn', state.root).addEventListener('click', handleCommentAction);
+    $('.pv-comment-voice-preview', state.root).addEventListener('click', function (e) { var rm = e.target.closest('.pv-comment-voice-remove'); if (rm) { setCommentVoice(null, 0); return; } var card = e.target.closest('.pv-voice-card'); if (card) toggleVoiceCard(card); });
+    $('.pv-comment-input-translate', state.root).addEventListener('click', translateCommentInput);
+    bindLongPress($('.pv-comment-input-translate', state.root), openTranslateSettings);
+    $('.pv-comment-input', state.root).addEventListener('input', updateCommentActionButton);
+    $('.pv-comment-input', state.root).addEventListener('keydown', function (e) { if (e.key === 'Enter') submitComment(); });
+    $('.pv-translate-close', state.root).addEventListener('click', closeTranslateSettings);
+    $('.pv-modal-backdrop', state.root).addEventListener('click', closeTranslateSettings);
+    $('.pv-translate-save', state.root).addEventListener('click', function () {
+      var p = $('.pv-translate-panel', state.root);
+      safeJsonSet('pv-translate-settings', {
+        provider: $('[name="provider"]', p).value,
+        sourceLang: $('[name="sourceLang"]', p).value,
+        targetLang: $('[name="targetLang"]', p).value,
+        aiEndpoint: $('[name="aiEndpoint"]', p).value,
+        aiModel: $('[name="aiModel"]', p).value,
+        aiApiKey: $('[name="aiApiKey"]', p).value,
+        aiPrompt: $('[name="aiPrompt"]', p).value
+      });
+      closeTranslateSettings();
+    });
+    $$('.pv-provider-tab', state.root).forEach(function (tab) {
+      tab.addEventListener('click', function () {
+        var p = $('.pv-translate-panel', state.root);
+        $('[name="provider"]', p).value = tab.dataset.provider || 'google';
+        $$('.pv-provider-tab', p).forEach(function (t) { t.classList.toggle('is-active', t === tab); });
+        p.classList.toggle('is-ai', tab.dataset.provider === 'ai');
+      });
+    });
+    var viewer = $('.pv-viewer', state.root);
+    $('.pv-viewer-close', viewer).addEventListener('click', closeViewer);
+    viewer.addEventListener('pointerdown', function (e) { state.viewer.down = true; state.viewer.startX = e.clientX; state.viewer.startY = e.clientY; });
+    viewer.addEventListener('pointerup', function (e) { if (!state.viewer.down) return; state.viewer.down = false; var dx = e.clientX - state.viewer.startX; var dy = e.clientY - state.viewer.startY; if (dy > 66 && Math.abs(dy) > Math.abs(dx)) closeViewer(); });
+    document.addEventListener('visibilitychange', function () { if (document.hidden) pauseSlide(state.index); else activateCurrent(false); });
+  }
+  function onRootClick(e) {
+    var btn;
+    if ((btn = e.target.closest('.pv-center-play'))) {
+      e.preventDefault();
+      e.stopPropagation();
+      var ci = Number(btn.dataset.index);
+      state.manualPausedKey = '';
+      unlockSoundFromGesture();
+      playSlide(ci, true);
+      return;
+    }
+    if ((btn = e.target.closest('.pv-sound-btn'))) { e.preventDefault(); e.stopPropagation(); toggleSound(Number(btn.dataset.index)); return; }
+    if ((btn = e.target.closest('.pv-like'))) { e.preventDefault(); e.stopPropagation(); var i = Number(btn.dataset.index); toggleLike(state.list[i], findSlide(i), true); return; }
+    if ((btn = e.target.closest('.pv-comment-btn'))) { e.preventDefault(); e.stopPropagation(); openComments(state.list[Number(btn.dataset.index)]); return; }
+    if ((btn = e.target.closest('.pv-follow-plus'))) { e.preventDefault(); e.stopPropagation(); var idx = Number(btn.dataset.index); toggleFollow(state.list[idx], findSlide(idx)); return; }
+    if ((btn = e.target.closest('.pv-translate-btn'))) { e.preventDefault(); e.stopPropagation(); var ti = Number(btn.dataset.index); translateSlide(state.list[ti], findSlide(ti)); return; }
+    if ((btn = e.target.closest('.pv-album-btn'))) { e.preventDefault(); e.stopPropagation(); var pi = Number(btn.dataset.index); openViewer(state.list[pi].images || [], 0); return; }
+    if ((btn = e.target.closest('.pv-voice-card'))) { e.preventDefault(); e.stopPropagation(); toggleVoiceCard(btn); return; }
+    if ((btn = e.target.closest('.pv-comment-reply'))) { e.preventDefault(); e.stopPropagation(); setReplyTarget(e.target.closest('.pv-comment')); return; }
+    if ((btn = e.target.closest('.pv-comment-translate'))) { e.preventDefault(); e.stopPropagation(); translateComment(e.target.closest('.pv-comment')); return; }
+    if (e.target.closest('.pv-avatar-link, .pv-avatar-wrap a, .pv-username')) { e.preventDefault(); e.stopPropagation(); return; }
+    if ((btn = e.target.closest('.pv-text-row'))) { if (!e.target.closest('.pv-translate-btn')) btn.classList.toggle('is-expanded'); }
+  }
+  function onRootPointerDown(e) {
+    var tap = e.target.closest('.pv-tap-zone');
+    state.pointer.down = !!tap;
+    state.pointer.x = e.clientX;
+    state.pointer.y = e.clientY;
+    state.pointer.moved = false;
+    state.pointer.tapIndex = tap ? Number(tap.dataset.index) : -1;
+    if (!e.target.closest('input, textarea, select, .pv-sound-btn, .pv-comments-panel, .pv-compose-panel, .pv-translate-panel, .pv-viewer')) unlockSoundFromGesture();
+    var textRow = e.target.closest('.pv-text-row');
+    var translateBtn = e.target.closest('.pv-translate-btn, .pv-comment-translate');
+    if (textRow || translateBtn) { clearTimeout(state.translateLongPressTimer); state.translateLongPressTimer = setTimeout(function () { openTranslateSettings(); }, 650); }
+    if (tap) state.hasInteracted = true;
+    var panel = $('.pv-comments-panel', state.root);
+    if (panel && panel.classList.contains('is-open') && e.target.closest('.pv-comments-panel') && !e.target.closest('input,button,.pv-voice-card')) {
+      var canDrag = e.target.closest('.pv-panel-grip, .pv-comments-drag');
+      if (!canDrag) return;
+      state.comments.dragCandidate = true; state.comments.dragStartTopZone = true; state.comments.dragStartY = e.clientY; state.comments.dragY = 0;
+    }
+  }
+  function onRootPointerMove(e) {
+    if (state.pointer.down && Math.hypot(e.clientX - state.pointer.x, e.clientY - state.pointer.y) > 14) state.pointer.moved = true;
+    var panel = $('.pv-comments-panel', state.root);
+    if (state.comments.dragCandidate && !state.comments.dragging) {
+      var dy0 = e.clientY - state.comments.dragStartY;
+      if (dy0 > 8 && state.comments.dragStartTopZone) state.comments.dragging = true;
+      if (Math.abs(dy0) > 18 && dy0 < 0) state.comments.dragCandidate = false;
+    }
+    if (state.comments.dragging) {
+      var dy = Math.max(0, e.clientY - state.comments.dragStartY);
+      state.comments.dragY = dy;
+      if (panel) panel.style.transform = 'translateY(' + dy + 'px)';
+      if (e.cancelable) e.preventDefault();
+    }
+  }
+  function onRootPointerUp(e) {
+    clearTimeout(state.translateLongPressTimer);
+    if (state.comments.dragging) {
+      var panel = $('.pv-comments-panel', state.root); state.comments.dragging = false; state.comments.dragCandidate = false;
+      var dy = Math.max(0, e.clientY - state.comments.dragStartY); panel.style.transform = '';
+      if (dy > 86) closeComments(); state.comments.dragCandidate = false; return;
+    }
+    state.comments.dragCandidate = false;
+    var tap = e.target.closest('.pv-tap-zone');
+    if (tap && state.pointer.down && !state.pointer.moved) { e.preventDefault(); e.stopPropagation(); handleTap(e, Number(tap.dataset.index)); }
+    state.pointer.down = false; state.pointer.tapIndex = -1; state.pointer.moved = false;
+  }
+  function onRootPointerCancel() { clearTimeout(state.translateLongPressTimer); state.comments.dragging = false; state.comments.dragCandidate = false; state.pointer.down = false; state.pointer.moved = false; var p = $('.pv-comments-panel', state.root); if (p) p.style.transform = ''; }
 
-#peipe-video-app .pv-comments-panel {
-  height: auto !important;
-  min-height: 238px !important;
-  max-height: min(82dvh, 700px) !important;
-}
+  function showEmpty(text) { var old = $('.pv-empty-page', state.root); if (old) old.remove(); var div = document.createElement('div'); div.className = 'pv-empty-page'; div.textContent = text || TEXT.empty; state.root.appendChild(div); }
+  function injectRuntimeFixStyles() {
+    // CSS is delivered as peipe-video-discover-sea-final.css.
+    // Keep this hook as a no-op to avoid stacking duplicate runtime override patches.
+  }
 
-#peipe-video-app .pv-comments-list {
-  flex: 0 1 auto !important;
-  min-height: 88px !important;
-  max-height: min(52dvh, 430px) !important;
-}
-
-#peipe-video-app .pv-empty-comments {
-  min-height: 84px !important;
-  display: flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-}
-
-#peipe-video-app .pv-comment-send-row {
-  padding: 8px 2px max(8px, var(--pv-bottom-safe)) !important;
-  background: transparent !important;
-  border: 0 !important;
-}
-
-#peipe-video-app .pv-comment-input-wrap {
-  width: 100% !important;
-  min-height: 46px !important;
-  display: flex !important;
-  align-items: center !important;
-  gap: 4px !important;
-  padding: 4px 5px !important;
-  border-radius: 999px !important;
-  background: rgba(255,255,255,.92) !important;
-  box-shadow: 0 6px 22px rgba(15,23,42,.08) !important;
-  border: 1px solid rgba(15,23,42,.06) !important;
-}
-
-#peipe-video-app .pv-comment-input-wrap .pv-comment-input {
-  flex: 1 1 auto !important;
-  min-width: 0 !important;
-  height: 38px !important;
-  border: 0 !important;
-  border-radius: 999px !important;
-  background: transparent !important;
-  outline: none !important;
-  box-shadow: none !important;
-  padding: 0 8px !important;
-  color: #111827 !important;
-  font-size: 15px !important;
-}
-
-#peipe-video-app .pv-comment-input-wrap .pv-comment-input::placeholder {
-  color: rgba(17,24,39,.44) !important;
-}
-
-#peipe-video-app .pv-comment-input-wrap .pv-comment-input-translate,
-#peipe-video-app .pv-comment-input-wrap .pv-comment-action-btn {
-  flex: 0 0 36px !important;
-  width: 36px !important;
-  height: 36px !important;
-  min-width: 36px !important;
-  border: 0 !important;
-  border-radius: 999px !important;
-  background: transparent !important;
-  color: rgba(17,24,39,.64) !important;
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  padding: 0 !important;
-  box-shadow: none !important;
-}
-
-#peipe-video-app .pv-comment-input-wrap .pv-comment-action-btn.is-send {
-  background: #2aabee !important;
-  color: #fff !important;
-}
-
-#peipe-video-app .pv-comment-input-wrap .pv-comment-action-btn.recording {
-  color: #ff2442 !important;
-}
-
-#peipe-video-app .pv-comment-input-wrap .pv-mic-svg,
-#peipe-video-app .pv-comment-input-wrap .pv-send-svg {
-  width: 20px !important;
-  height: 20px !important;
-  fill: none !important;
-  stroke: currentColor !important;
-  stroke-width: 2.1px !important;
-  stroke-linecap: round !important;
-  stroke-linejoin: round !important;
-}
-
-#peipe-video-app .pv-comment-input-wrap .pv-mic-svg path,
-#peipe-video-app .pv-comment-input-wrap .pv-send-svg path {
-  fill: none !important;
-  stroke: currentColor !important;
-}
-
-#peipe-video-app .pv-cover-fallback-wrap:not(.has-cover) {
-  background:
-    radial-gradient(circle at 52% 35%, rgba(42,171,238,.26), transparent 0 28%, rgba(255,36,66,.10) 48%, rgba(0,0,0,.52) 82%),
-    linear-gradient(145deg, #172033 0%, #090b12 58%, #18090e 100%) !important;
-}
-
-#peipe-video-app .pv-cover-play {
-  display: none !important;
-}
-
+  function init() {
+    state.root = document.getElementById('peipe-video-app'); if (!state.root) return;
+    document.body.classList.add('pv-video-mode'); injectRuntimeFixStyles(); addPreconnects(); buildChrome(); showComposeFabInitial();
+    ensureSwiper().then(function () { return loadFeed(true); });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
+})();
