@@ -1,10 +1,11 @@
-/* Peipe /video mobile discover page v7 optimized final - compressed images + safer media-layer UI fixes build
+/* Peipe /video mobile discover page v7 SEA final - compressed images + dedup CSS + follow lower-left + playback watchdog
    - Adds cost-effective image compression for compose images: 1080px / ~90KB target, WebP preferred
    - HEIC/HEIF are converted when the browser can decode them; if conversion fails, upload is rejected
    - GIF/SVG are rejected for compose image uploads to avoid large/unsafe originals
    - Feed images use cover + centered crop to avoid black side bars; viewer still shows full image
    - Follow button moved to avatar lower-left and follow API uses raw NodeBB v3 fetch
    - Manual video pause shows a center play button
+   - Current TikTok iframe has a lightweight stuck/loading watchdog that soft-refreshes and retries playback
    - TikTok playback/comment/translate behavior kept from v7
 */
 (function () {
@@ -32,12 +33,13 @@
   var CONFIG = deepMerge({
     cid: 6,
     pageSize: 12,
-    preloadAhead: 4,
-    preloadVideoAhead: 1,
-    keepWarmVideoAhead: 1,
-    keepWarmVideoBehind: 0,
-    enableSegmentPrewarm: false,
-    segmentPrewarmMs: 220,
+    preloadAhead: 6,
+    preloadVideoAhead: 2,
+    keepWarmVideoAhead: 2,
+    keepWarmVideoBehind: 1,
+    enableSegmentPrewarm: true,
+    segmentPrewarmMs: 180,
+    playbackWatchdogMs: 5400,
     coverCacheEndpoint: '/api/v3/plugins/peipe-video/cover',
     imageMax: 4,
     imageConfig: {
@@ -61,6 +63,7 @@
   CONFIG.keepWarmVideoBehind = Math.max(0, Number(CONFIG.keepWarmVideoBehind === undefined ? 0 : CONFIG.keepWarmVideoBehind));
   CONFIG.enableSegmentPrewarm = CONFIG.enableSegmentPrewarm === true || CONFIG.enableSegmentPrewarm === 'true';
   CONFIG.segmentPrewarmMs = Math.max(120, Math.min(500, Number(CONFIG.segmentPrewarmMs || 220)));
+  CONFIG.playbackWatchdogMs = Math.max(2600, Math.min(9000, Number(CONFIG.playbackWatchdogMs || 5200)));
 
   var TEXT = {
     loading: '发现加载中...',
@@ -257,7 +260,7 @@
   }
 
   function addPreconnects() {
-    ['https://www.tiktok.com', 'https://www.tiktokcdn.com', 'https://p16-sign-va.tiktokcdn.com', 'https://p19-sign.tiktokcdn-us.com'].forEach(function (href) {
+    ['https://www.tiktok.com', 'https://www.tiktokcdn.com', 'https://p16-sign-va.tiktokcdn.com', 'https://p19-sign.tiktokcdn-us.com', 'https://p16-sign-sg.tiktokcdn.com'].forEach(function (href) {
       if (document.querySelector('link[rel="preconnect"][href="' + href + '"]')) return;
       var link = document.createElement('link');
       link.rel = 'preconnect'; link.href = href; link.crossOrigin = 'anonymous'; document.head.appendChild(link);
@@ -313,6 +316,13 @@
           item.coverUrl = getCachedCoverUrl(item) || '';
           return item;
         }).filter(function (item) { return (item.tiktoks && item.tiktoks.length) || (item.images && item.images.length); });
+        items.forEach(function (item) {
+          var tk = item && item.tiktoks && item.tiktoks[0];
+          if (!tk || item.coverUrl) return;
+          fetchCover(tk.videoId, tk.url).then(function (url) {
+            if (url) item.coverUrl = url;
+          });
+        });
         state.list = refresh ? items : state.list.concat(items);
         state.feedDone = payload.hasMore === false || !items.length;
         state.feedPage += 1;
@@ -431,6 +441,7 @@
     var mediaHtml = hasVideo ? '<div class="pv-video-shell" data-video-id="' + escapeHtml(item.tiktoks[0].videoId) + '"></div>' :
       (images.length ? renderImageMain(item) : '<div class="pv-error">这条动态没有 TikTok 或图片</div>');
     var author = item.author || {};
+    var followUid = authorUid(author);
     var avatar = avatarSrc(author);
     var avatarHtml = avatar ? '<img class="pv-avatar" src="' + escapeHtml(avatar) + '" alt="avatar">' : '<div class="pv-avatar"></div>';
     var following = readFollow(author) || item.viewer.following;
@@ -443,7 +454,7 @@
         (hasVideo ? '<div class="pv-tap-zone" data-index="' + index + '"></div><button type="button" class="pv-center-play" data-index="' + index + '" aria-label="播放">▶</button>' : '') +
         '<div class="pv-toolbar">' +
           '<div class="pv-avatar-wrap"><span class="pv-avatar-link">' + avatarHtml + '</span>' +
-          (author.uid && !isOwnAuthor(author) ? '<button type="button" class="pv-follow-plus ' + (following ? 'is-following' : '') + '" data-index="' + index + '">' + (following ? '✓' : '+') + '</button>' : '') + '</div>' +
+          (followUid && !isOwnAuthor(author) ? '<button type="button" class="pv-follow-plus ' + (following ? 'is-following' : '') + '" data-index="' + index + '">' + (following ? '✓' : '+') + '</button>' : '') + '</div>' +
           '<button type="button" class="pv-action pv-like ' + (liked ? 'is-active' : '') + '" data-index="' + index + '"><span class="pv-action-icon">' + iconHeart(liked) + '</span><span>' + formatCount(item.counts.likes) + '</span></button>' +
           '<button type="button" class="pv-action pv-comment-btn" data-index="' + index + '"><span class="pv-action-icon">' + iconComment() + '</span><span>' + formatCount(item.counts.comments) + '</span></button>' +
           (hasVideo ? '<button type="button" class="pv-action pv-sound-btn ' + (!state.soundMuted && state.soundUnlocked ? 'is-active' : '') + '" data-index="' + index + '" aria-label="声音"><span class="pv-action-icon">' + iconSound(!state.soundMuted && state.soundUnlocked) + '</span><span class="pv-sound-label">声音</span></button>' : '') +
@@ -591,7 +602,9 @@
       status: 'loading',
       playSeq: 0,
       prewarmStarted: false,
-      pauseRetryTimer: 0
+      pauseRetryTimer: 0,
+      watchdogTimer: 0,
+      retryReloadedAt: 0
     };
     state.players.set(key, player);
     var cachedCover = getCachedCoverUrl(item);
@@ -615,6 +628,44 @@
     if (unmute && state.soundUnlocked && !state.soundMuted) sendToPlayer(player.iframe, 'unMute');
     else sendToPlayer(player.iframe, 'mute');
     sendToPlayer(player.iframe, 'play');
+  }
+  function clearPlaybackWatchdog(player) {
+    if (!player || !player.watchdogTimer) return;
+    clearTimeout(player.watchdogTimer);
+    player.watchdogTimer = 0;
+  }
+  function schedulePlaybackWatchdog(player, delay, reason) {
+    if (!player || !player.iframe || player.iframe.src === 'about:blank') return;
+    if (player.index !== state.index || !player.wantPlay || state.manualPausedKey === player.key) return;
+    clearPlaybackWatchdog(player);
+    player.watchdogTimer = setTimeout(function () {
+      if (!player || !player.iframe || player.iframe.src === 'about:blank') return;
+      if (player.index !== state.index || !player.wantPlay || state.manualPausedKey === player.key || player.status === 'playing') return;
+      var now = Date.now();
+      var slide = findSlide(player.index);
+      if (slide) slide.classList.add('is-loading');
+
+      // TikTok iframes occasionally stay in loading/buffering forever on weak networks or low-memory phones.
+      // A soft src refresh is safer than keeping the dead iframe; throttle it to avoid reload loops.
+      if (!player.retryReloadedAt || now - player.retryReloadedAt > 9000) {
+        player.retryReloadedAt = now;
+        player.ready = false;
+        player.status = 'loading';
+        try {
+          player.iframe.src = buildPlayerUrl(player.videoId, {
+            autoplay: true,
+            muted: !state.soundUnlocked || state.soundMuted
+          });
+        } catch (e) {}
+      }
+      tryPlayPlayer(player, !!state.soundUnlocked);
+      setTimeout(function () {
+        if (player && player.index === state.index && player.wantPlay && player.status !== 'playing') {
+          tryPlayPlayer(player, !!state.soundUnlocked);
+        }
+      }, 880);
+      schedulePlaybackWatchdog(player, CONFIG.playbackWatchdogMs + 1200, reason || 'retry');
+    }, Math.max(1200, Number(delay || CONFIG.playbackWatchdogMs)));
   }
   function currentPlayer() {
     var item = state.list[state.index];
@@ -733,6 +784,7 @@
     var stop = function () {
       if (!player || !player.iframe) return;
       if (!force && (player.index === state.index || isWarmIndex(player.index))) return;
+      clearPlaybackWatchdog(player);
       try {
         player.iframe.src = 'about:blank';
         if (player.iframe.parentNode) player.iframe.remove();
@@ -777,6 +829,7 @@
     setTimeout(requestPlay, 420);
     setTimeout(requestPlay, 1200);
     setTimeout(function () { if (stillWantsPlay() && player.status !== 'playing') markSlidePlaying(index); }, 1900);
+    schedulePlaybackWatchdog(player, CONFIG.playbackWatchdogMs, 'play');
     warmVideoWindow(index);
   }
   function pauseSlide(index, force, manual) {
@@ -787,6 +840,7 @@
       p.playSeq = (p.playSeq || 0) + 1;
       if (manual) state.manualPausedKey = p.key;
       if (p.pauseRetryTimer) { clearTimeout(p.pauseRetryTimer); p.pauseRetryTimer = 0; }
+      clearPlaybackWatchdog(p);
       if (p.iframe) {
         sendToPlayer(p.iframe, 'mute');
         sendToPlayer(p.iframe, 'pause');
@@ -806,6 +860,7 @@
       p.wantPlay = false;
       p.playSeq = (p.playSeq || 0) + 1;
       if (p.pauseRetryTimer) { clearTimeout(p.pauseRetryTimer); p.pauseRetryTimer = 0; }
+      clearPlaybackWatchdog(p);
       var warm = isWarmIndex(p.index);
       if (p.iframe) {
         sendToPlayer(p.iframe, 'mute');
@@ -878,6 +933,7 @@
         var value = Number(data.value); var word = String(data.value || '').toLowerCase();
         if (value === 1 || word === 'playing') {
           player.status = 'playing';
+          clearPlaybackWatchdog(player);
           if (player.index === state.index) {
             if (state.hasInteracted || state.soundUnlocked) safeJsonSet('pv-sound-unlocked', true);
             markSlidePlaying(player.index);
@@ -893,11 +949,16 @@
             player.pauseRetryTimer = setTimeout(function () {
               if (player.index === state.index && player.wantPlay && state.manualPausedKey !== player.key && player.status !== 'playing') {
                 tryPlayPlayer(player, !!state.soundUnlocked);
+                schedulePlaybackWatchdog(player, CONFIG.playbackWatchdogMs, 'paused');
               }
             }, 520);
           }
         } else if (value === 3 || word === 'buffering') {
-          var s2 = findSlide(player.index); if (s2 && player.index === state.index && player.wantPlay) s2.classList.add('is-loading');
+          var s2 = findSlide(player.index);
+          if (s2 && player.index === state.index && player.wantPlay) {
+            s2.classList.add('is-loading');
+            schedulePlaybackWatchdog(player, Math.max(2600, CONFIG.playbackWatchdogMs - 1200), 'buffering');
+          }
         }
       }
     });
@@ -1744,40 +1805,8 @@
 
   function showEmpty(text) { var old = $('.pv-empty-page', state.root); if (old) old.remove(); var div = document.createElement('div'); div.className = 'pv-empty-page'; div.textContent = text || TEXT.empty; state.root.appendChild(div); }
   function injectRuntimeFixStyles() {
-    if (document.getElementById('pv-video-runtime-fix-style')) return;
-    var style = document.createElement('style');
-    style.id = 'pv-video-runtime-fix-style';
-    style.textContent = '' +
-      '#peipe-video-app .pv-slide-item.is-video .pv-video-shell,#peipe-video-app .pv-slide-item.is-video .pv-tiktok-frame{position:absolute!important;inset:0!important;z-index:0!important;}' +
-      '#peipe-video-app .pv-slide-item.is-video .pv-cover{position:absolute!important;inset:0!important;z-index:1!important;display:flex!important;align-items:center!important;justify-content:center!important;overflow:hidden!important;background:radial-gradient(circle at 28% 18%,rgba(255,45,85,.48),transparent 34%),radial-gradient(circle at 72% 72%,rgba(0,180,255,.34),transparent 38%),linear-gradient(135deg,#191725,#06070b)!important;pointer-events:none!important;transition:opacity .18s ease!important;}' +
-      '#peipe-video-app .pv-slide-item.is-video .pv-cover.is-hidden{opacity:0!important;visibility:hidden!important;}' +
-      '#peipe-video-app .pv-slide-item.is-video .pv-cover img{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;object-fit:cover!important;display:none!important;}' +
-      '#peipe-video-app .pv-slide-item.is-video .pv-cover.has-cover img{display:block!important;}' +
-      '#peipe-video-app .pv-slide-item.is-video .pv-cover.has-cover .pv-cover-fallback{background:linear-gradient(180deg,rgba(0,0,0,.08),rgba(0,0,0,.26))!important;}' +
-      '#peipe-video-app .pv-slide-item.is-video .pv-cover:not(.has-cover) img{display:none!important;}' +
-      '#peipe-video-app .pv-cover-fallback{position:absolute!important;inset:0!important;display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;color:#fff!important;text-shadow:0 2px 10px rgba(0,0,0,.45)!important;}' +
-      '#peipe-video-app .pv-cover-glow{position:absolute!important;width:46vw!important;height:46vw!important;max-width:220px!important;max-height:220px!important;border-radius:999px!important;background:rgba(255,255,255,.12)!important;filter:blur(20px)!important;}' +
-      '#peipe-video-app .pv-cover-play{position:relative!important;width:64px!important;height:64px!important;border-radius:999px!important;background:rgba(255,255,255,.18)!important;backdrop-filter:blur(8px)!important;display:flex!important;align-items:center!important;justify-content:center!important;font-size:28px!important;line-height:1!important;padding-left:4px!important;box-shadow:0 10px 34px rgba(0,0,0,.28)!important;}' +
-      '#peipe-video-app .pv-cover-text{position:relative!important;margin-top:12px!important;font-size:13px!important;opacity:.86!important;letter-spacing:.08em!important;}' +
-      '#peipe-video-app .pv-slide-item.is-video .pv-gradient{z-index:2!important;}' +
-      '#peipe-video-app .pv-slide-item.is-video .pv-tap-zone,#peipe-video-app .pv-slide-item.is-video .pv-toolbar,#peipe-video-app .pv-slide-item.is-video .pv-desc{z-index:3!important;}' +
-      '#peipe-video-app .pv-cover-play{display:none!important;}' +
-      '#peipe-video-app .pv-slide-item.is-video .pv-tap-zone{right:0!important;bottom:0!important;touch-action:pan-y!important;}' +
-      '#peipe-video-app .pv-tiktok-frame{pointer-events:none!important;}' +
-      '#peipe-video-app .pv-mic-svg,#peipe-video-app .pv-send-svg,#peipe-video-app .pv-sound-svg{width:20px!important;height:20px!important;fill:none!important;stroke:currentColor!important;stroke-width:2.2px!important;stroke-linecap:round!important;stroke-linejoin:round!important;}' +
-      '#peipe-video-app .pv-mic-svg path,#peipe-video-app .pv-send-svg path,#peipe-video-app .pv-sound-svg path{fill:none!important;stroke:currentColor!important;}' +
-      '#peipe-video-app .pv-slide-item{position:relative!important;overflow:hidden!important;isolation:isolate!important;}' +
-      '#peipe-video-app .pv-slide-item .pv-media{z-index:0!important;}' +
-      '#peipe-video-app .pv-slide-item .pv-gradient{z-index:2!important;pointer-events:none!important;}' +
-      '#peipe-video-app .pv-slide-item .pv-toolbar,#peipe-video-app .pv-slide-item .pv-desc{z-index:8!important;}' +
-      '#peipe-video-app .pv-slide-item.is-image .pv-image-main,#peipe-video-app .pv-slide-item.is-image .pv-image-swiper,#peipe-video-app .pv-slide-item.is-image .pv-image-swiper .swiper-wrapper,#peipe-video-app .pv-slide-item.is-image .pv-image-swiper-slide{width:100%!important;height:100%!important;background:#050505!important;overflow:hidden!important;}' +
-      '#peipe-video-app .pv-slide-item.is-image .pv-image-swiper-slide img{width:100%!important;height:100%!important;object-fit:cover!important;object-position:center center!important;display:block!important;background:#050505!important;}' +
-      '#peipe-video-app .pv-viewer img{max-width:100%!important;max-height:100%!important;object-fit:contain!important;object-position:center center!important;}' +
-      '#peipe-video-app .pv-avatar-wrap{position:relative!important;overflow:visible!important;z-index:9!important;}' +
-      '#peipe-video-app .pv-follow-plus{left:-7px!important;right:auto!important;bottom:-7px!important;top:auto!important;z-index:10!important;}' +
-      '#peipe-video-app .pv-center-play{position:absolute!important;left:50%!important;top:50%!important;transform:translate(-50%,-50%) scale(.96)!important;width:76px!important;height:76px!important;border:0!important;border-radius:999px!important;background:rgba(255,255,255,.18)!important;color:#fff!important;display:flex!important;align-items:center!important;justify-content:center!important;font-size:34px!important;line-height:1!important;padding:0 0 0 5px!important;opacity:0!important;visibility:hidden!important;pointer-events:none!important;z-index:7!important;backdrop-filter:blur(12px)!important;-webkit-backdrop-filter:blur(12px)!important;box-shadow:0 12px 42px rgba(0,0,0,.38)!important;transition:opacity .16s ease,transform .16s ease,visibility .16s ease!important;}' +
-      '#peipe-video-app .pv-slide-item.is-video.is-paused .pv-center-play{opacity:1!important;visibility:visible!important;pointer-events:auto!important;transform:translate(-50%,-50%) scale(1)!important;}';
-    document.head.appendChild(style);
+    // CSS is delivered as peipe-video-discover-sea-final.css.
+    // Keep this hook as a no-op to avoid stacking duplicate runtime override patches.
   }
 
   function init() {
