@@ -128,6 +128,8 @@
     feedDone: false,
     index: 0,
     players: new Map(),
+    nextWarmTimer: 0,
+    nextWarmIndex: -1,
     imageIndex: new Map(),
     imageSwipers: new Map(),
     hasInteracted: false,
@@ -251,7 +253,10 @@
     return String(me.uid || '') === String(author.uid || '') || String(me.userslug || '').toLowerCase() === String(author.userslug || '').toLowerCase();
   }
   function authorHref(author) { return author && author.userslug ? rel('/user/' + encodeURIComponent(author.userslug)) : '#'; }
-  function avatarSrc(author) { return author && author.picture ? author.picture : ''; }
+  function avatarSrc(author) {
+    author = author || {};
+    return author.picture || author.uploadedpicture || author.avatar || author.accountPicture || '';
+  }
   function canonicalTikTokUrl(url) {
     var m = String(url || '').replace(/&amp;/g, '&').match(RE.tiktokOne);
     return m ? 'https://www.tiktok.com/@' + m[1] + '/video/' + m[2] : String(url || '');
@@ -299,7 +304,7 @@
     if (refresh) {
       state.feedPage = 1; state.feedDone = false; state.list = []; state.index = 0;
       state.players.forEach(function (p) { try { if (p.iframe) p.iframe.remove(); } catch (e) {} });
-      state.players.clear(); state.imageSwipers.clear(); state.manualPausedKey = '';
+      state.players.clear(); if (state.nextWarmTimer) { clearTimeout(state.nextWarmTimer); state.nextWarmTimer = 0; state.nextWarmIndex = -1; } state.imageSwipers.clear(); state.manualPausedKey = '';
       updateSwiperSlides(true);
     }
     return apiFetch('/api/v3/plugins/peipe-video/feed?page=' + state.feedPage + '&pageSize=' + CONFIG.pageSize)
@@ -371,11 +376,14 @@
           safeJsonSet('pv-sound-muted', false);
           updateSoundUi();
           hideComposerFab();
-          // 关键修复：滑动开始时立即暂停上一条，但不要 prime 新视频
-          // 避免上一条和新视频同时争抢带宽
+          // 切换开始时只提前创建目标 iframe，不发送 play。
+          // 这样能减少切换后的转圈，又不会让两个视频同时播放抢带宽。
           var previousIndex = typeof swiper.previousIndex === 'number' ? swiper.previousIndex : state.index;
           var targetIndex = typeof swiper.activeIndex === 'number' ? swiper.activeIndex : state.index;
-          if (previousIndex !== targetIndex) pauseSlide(previousIndex, false);
+          if (previousIndex !== targetIndex) {
+            ensureTikTokPlayer(targetIndex, true);
+            pauseSlide(previousIndex, false);
+          }
           state.index = targetIndex;
         },
         slideChange: function (swiper) {
@@ -582,7 +590,7 @@
     var isCurrent = index === state.index;
     iframe.className = 'pv-tiktok-frame';
     iframe.src = buildPlayerUrl(tk.videoId, {
-      autoplay: true,
+      autoplay: autoplay === false ? false : true,
       muted: !isCurrent || !state.soundUnlocked || state.soundMuted
     });
     iframe.allow = 'autoplay; fullscreen; encrypted-media; picture-in-picture';
@@ -701,34 +709,49 @@
     setSoundMuted(!state.soundMuted);
   }
 
+  function scheduleNextWarm(fromIndex) {
+    var ahead = Math.max(0, Number(CONFIG.keepWarmVideoAhead || 0));
+    if (ahead <= 0 || fromIndex < 0 || fromIndex >= state.list.length) return;
+    var nextIdx = fromIndex + 1;
+    if (nextIdx >= state.list.length) return;
+    var nextItem = state.list[nextIdx];
+    if (!nextItem || !(nextItem.tiktoks && nextItem.tiktoks[0])) return;
+    var nextKey = playerKey(nextIdx, nextItem.tiktoks[0].videoId);
+    var existing = state.players.get(nextKey);
+    if (existing && existing.iframe && existing.iframe.parentNode && existing.iframe.src !== 'about:blank') return;
+
+    if (state.nextWarmTimer && state.nextWarmIndex !== nextIdx) {
+      clearTimeout(state.nextWarmTimer);
+      state.nextWarmTimer = 0;
+      state.nextWarmIndex = -1;
+    }
+    if (state.nextWarmTimer && state.nextWarmIndex === nextIdx) return;
+
+    var cur = currentPlayer();
+    var delay = cur && cur.status === 'playing' ? 260 : 700;
+    state.nextWarmIndex = nextIdx;
+    state.nextWarmTimer = setTimeout(function () {
+      state.nextWarmTimer = 0;
+      state.nextWarmIndex = -1;
+      if (state.index !== fromIndex) return;
+      var next = ensureTikTokPlayer(nextIdx, true);
+      if (next && next.iframe) {
+        try { next.iframe.loading = 'eager'; next.iframe.fetchPriority = 'low'; } catch (e) {}
+        sendToPlayer(next.iframe, 'mute');
+        // 不做分段预热，只把播放器建好并轻量暂停，减少切换转圈。
+        setTimeout(function () {
+          if (!next || !next.iframe || next.index === state.index) return;
+          sendToPlayer(next.iframe, 'mute');
+          sendToPlayer(next.iframe, 'pause');
+        }, 900);
+      }
+    }, delay);
+  }
+
   function warmVideoWindow(fromIndex) {
     if (fromIndex < 0 || fromIndex >= state.list.length) return;
-    // 关键修复：只 ensure 当前视频。下一个视频不主动创建 iframe，
-    // 等当前视频已经在 playing 状态后再考虑预热（lazy warm）
     ensureTikTokPlayer(fromIndex, fromIndex === state.index);
-
-    // 仅在当前视频已经在播放时，才预创建下一个视频的 iframe（但不 play）
-    var curPlayer = currentPlayer();
-    if (curPlayer && curPlayer.status === 'playing' && fromIndex === state.index) {
-      var nextIdx = fromIndex + 1;
-      var ahead = Math.max(0, Number(CONFIG.keepWarmVideoAhead || 0));
-      if (ahead > 0 && nextIdx < state.list.length) {
-        var nextItem = state.list[nextIdx];
-        if (nextItem && nextItem.tiktoks && nextItem.tiktoks[0]) {
-          // 延迟创建下一个 iframe，让当前视频先稳定播放
-          setTimeout(function () {
-            if (state.index !== fromIndex) return;
-            var p = currentPlayer();
-            if (!p || p.status !== 'playing') return;
-            var next = ensureTikTokPlayer(nextIdx, false);
-            if (next && next.iframe) {
-              sendToPlayer(next.iframe, 'mute');
-              sendToPlayer(next.iframe, 'pause');
-            }
-          }, 900);
-        }
-      }
-    }
+    scheduleNextWarm(fromIndex);
   }
   function sendToPlayer(iframe, type, value) {
     if (!iframe || !iframe.contentWindow || iframe.src === 'about:blank') return;
@@ -1008,8 +1031,21 @@
   }
   function followStoreKey() { return 'pv-follow-state:' + localUserSuffix(); }
   function followStore() { return safeJsonGet(followStoreKey(), {}); }
-  function readFollow(author) { if (!author) return false; var s = followStore(); if (author.uid && s['uid:' + author.uid] !== undefined) return !!s['uid:' + author.uid]; if (author.userslug && s['slug:' + String(author.userslug).toLowerCase()] !== undefined) return !!s['slug:' + String(author.userslug).toLowerCase()]; return false; }
-  function writeFollow(author, following) { var s = followStore(); if (author.uid) s['uid:' + author.uid] = !!following; if (author.userslug) s['slug:' + String(author.userslug).toLowerCase()] = !!following; safeJsonSet(followStoreKey(), s); }
+  function readFollow(author) {
+    if (!author) return false;
+    var s = followStore();
+    var uid = authorUid(author);
+    if (uid && s['uid:' + uid] !== undefined) return !!s['uid:' + uid];
+    if (author.userslug && s['slug:' + String(author.userslug).toLowerCase()] !== undefined) return !!s['slug:' + String(author.userslug).toLowerCase()];
+    return false;
+  }
+  function writeFollow(author, following) {
+    var s = followStore();
+    var uid = authorUid(author);
+    if (uid) s['uid:' + uid] = !!following;
+    if (author && author.userslug) s['slug:' + String(author.userslug).toLowerCase()] = !!following;
+    safeJsonSet(followStoreKey(), s);
+  }
   function updateFollowUi(slide, following) { var btn = $('.pv-follow-plus', slide); if (!btn) return; btn.classList.toggle('is-following', !!following); btn.textContent = following ? '✓' : '+'; }
   function authorUid(author) {
     author = author || {};
