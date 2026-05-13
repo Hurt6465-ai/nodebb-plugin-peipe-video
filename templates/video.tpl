@@ -4,7 +4,7 @@
   <div class="pv-init-loading">[[peipe-video:loading]]</div>
 </div>
 
-<link rel="stylesheet" href="{relative_path}/plugins/nodebb-plugin-peipe-video/static/video-app.css?v=22">
+<link rel="stylesheet" href="{relative_path}/plugins/nodebb-plugin-peipe-video/static/video-app.css?v=23">
 
 <script>
   window.PEIPE_VIDEO_CONFIG = Object.assign({}, window.PEIPE_VIDEO_CONFIG || {}, {
@@ -27,6 +27,6 @@
   });
 </script>
 
-<script src="{relative_path}/plugins/nodebb-plugin-peipe-video/static/video-app.js?v=22"></script>
+<script src="{relative_path}/plugins/nodebb-plugin-peipe-video/static/video-app.js?v=23"></script>
 
 <!-- IMPORT partials/footer.tpl -->
