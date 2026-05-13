@@ -3,6 +3,8 @@
   --pv-top-safe: env(safe-area-inset-top, 0px);
   --pv-accent: #ff2442;
   --pv-text-shadow: 0 1px 3px rgba(0, 0, 0, .64);
+  --pv-official-bottom-reserve: 72px;
+  --pv-official-left-pass: 176px;
 }
 
 html:has(.pv-page-active),
@@ -217,19 +219,44 @@ body.pv-video-mode [component="sidebar"] {
   pointer-events: none;
 }
 
-/* ===== 关键：拦截层 =====
-   覆盖 TikTok iframe 底部官方控件之外的区域，
-   防止用户点击 iframe 内的视频主体跳转到下载页。
-   官方播放/音量按钮位于 iframe 的左下角约 0~80px 处，
-   我们留出底部一条横向通道让官方控件可点。
+/* ===== 关键：TikTok iframe 拦截层 =====
+   默认拦截所有可能导致下载页跳转的 iframe 点击。
+   只有当前视频刚播放时的 1 秒内，左下角官方播放/声音按钮区域会透传给 TikTok。
 */
 .pv-iframe-shield {
   position: absolute;
   inset: 0;
   z-index: 5;
   background: transparent;
+  pointer-events: none;
+}
+.pv-iframe-shield > div {
+  position: absolute;
+  background: transparent;
   pointer-events: auto;
-  /* 底部 60px 留给 TikTok 官方控件；右侧 100px 留给我们自己的右侧按钮 */
+  touch-action: manipulation;
+}
+.pv-shield-main {
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: var(--pv-official-bottom-reserve);
+}
+.pv-shield-bottom-right {
+  left: var(--pv-official-left-pass);
+  right: 0;
+  bottom: 0;
+  height: var(--pv-official-bottom-reserve);
+}
+.pv-shield-bottom-left {
+  left: 0;
+  bottom: 0;
+  width: var(--pv-official-left-pass);
+  height: var(--pv-official-bottom-reserve);
+}
+.pv-slide-item.is-official-window .pv-shield-bottom-left {
+  display: none;
+  pointer-events: none;
 }
 
 /* 双击点赞 / 单击播放暂停热区 —— 视频帖 */
@@ -238,7 +265,7 @@ body.pv-video-mode [component="sidebar"] {
   left: 0;
   right: 96px;
   top: 0;
-  bottom: 64px;          /* 底部留给官方控件 */
+  bottom: var(--pv-official-bottom-reserve);
   z-index: 6;
   background: transparent;
   touch-action: manipulation;
@@ -974,7 +1001,7 @@ body.pv-video-mode [component="sidebar"] {
 @media (max-width: 380px) {
   .pv-desc { right: 70px; bottom: max(74px, calc(var(--pv-bottom-safe) + 70px)); }
   .pv-toolbar { bottom: max(176px, calc(var(--pv-bottom-safe) + 168px)); }
-  .pv-tap-zone { bottom: 60px; }
+  .pv-tap-zone { bottom: var(--pv-official-bottom-reserve); }
 }
 
 /* 全局禁选 */
