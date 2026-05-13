@@ -1,9 +1,7 @@
-/* Peipe /video mobile discover page v7
-   - Independent /video page, official NodeBB plugin backend feed only
-   - Swiper vertical feed with virtual slides
-   - TikTok official embed keeps official audio controls; no custom center play button
-   - Image posts use horizontal carousel; video posts use vertical feed
-   - Comment drawer, replies, translate for text/comments/input
+/* Peipe /video mobile discover page v7 optimized
+   Frontend-only optimization: no backend cover changes required.
+   Main playback optimization: keep current + next few TikTok iframe players warm,
+   avoid resetting iframe.src when switching, and prune only far-away players.
 */
 (function () {
   'use strict';
@@ -14,8 +12,8 @@
   var CONFIG = Object.assign({
     cid: 6,
     pageSize: 12,
-    preloadAhead: 8,
-    preloadVideoAhead: 3,
+    preloadAhead: 5,
+    preloadVideoAhead: 2,
     imageMax: 4,
     coverCacheMs: 7 * 24 * 60 * 60 * 1000,
     translateCacheMs: 3 * 24 * 60 * 60 * 1000,
@@ -33,17 +31,13 @@
     publishFail: '发布失败',
     placeholder: '写点什么，或粘贴 TikTok 链接',
     chooseImage: '图片',
-    record: '语音',
-    stop: '停止',
     send: '发布',
     imageOnly: '请选择图片',
     uploadImage: '上传图片',
-    uploadVoice: '上传语音',
     enterSomething: '请输入内容、TikTok 链接或图片',
     comments: '评论',
     commentPlaceholder: '说点什么...',
     replyTo: '回复',
-    cancelReply: '取消回复',
     commentFail: '评论失败，可打开原帖评论',
     openTopic: '打开原帖',
     loginFirst: '请先登录',
@@ -63,22 +57,19 @@
     auto: '自动',
     voiceMsg: '语音消息',
     noComments: '暂无评论',
-    provider: '翻译方式',
     google: '谷歌翻译',
     ai: 'AI翻译',
     aiEndpoint: 'AI 接口',
     aiModel: '模型',
     aiApiKey: '密钥',
-    aiPrompt: '提示词',
-    voicePreview: '语音评论',
-    recording: '录音中'
+    aiPrompt: '提示词'
   };
 
   var RE = {
     tiktokGlobal: /https?:\/\/(?:www\.)?tiktok\.com\/@[^\/\s<>'"]+\/video\/(\d+)(?:\?[^\s<>'"]*)?/ig,
     tiktokOne: /https?:\/\/(?:www\.)?tiktok\.com\/@([^\/\s<>'"]+)\/video\/(\d+)/i,
     tiktokToken: /(?:https?[-:\/]+)?(?:www[.-])?tiktok[.-]com[-\/\w@.%=&?]+/ig,
-    tiktokShort: /https?:\/\/(?:vt|vm)\.tiktok\.com\/[^\s<>\'"]+/ig,
+    tiktokShort: /https?:\/\/(?:vt|vm)\.tiktok\.com\/[^\s<>'"]+/ig,
     audioExt: /\.(m4a|mp3|wav|ogg|oga|webm|aac)(?:[?#].*)?$/i
   };
 
@@ -92,21 +83,30 @@
     index: 0,
     players: new Map(),
     imageIndex: new Map(),
+    imageSwipers: new Map(),
     hasInteracted: false,
+    soundUnlocked: !!safeJsonGet('pv-sound-unlocked', false),
     lastTap: { time: 0, x: 0, y: 0, timer: 0 },
-    compose: {
-      imageFiles: [],
-      imageUrls: [],
+    compose: { imageFiles: [], imageUrls: [] },
+    viewer: { images: [], index: 0, swiper: null, startX: 0, startY: 0, down: false },
+    comments: {
+      item: null,
+      posts: [],
+      replyTo: null,
+      dragY: 0,
+      dragStartY: 0,
+      dragging: false,
+      dragCandidate: false,
+      dragStartTopZone: false,
+      voiceBlob: null,
+      voiceUrl: '',
+      voiceDuration: 0,
       mediaRecorder: null,
       stream: null,
       chunks: [],
       startAt: 0,
       timer: 0
     },
-    viewer: { images: [], index: 0, swiper: null, startX: 0, startY: 0, down: false },
-    imageSwipers: new Map(),
-    soundUnlocked: !!safeJsonGet('pv-sound-unlocked', false),
-    comments: { item: null, posts: [], loading: false, replyTo: null, dragY: 0, dragStartY: 0, dragging: false, dragCandidate: false, dragStartTopZone: false, voiceBlob: null, voiceUrl: '', voiceDuration: 0, mediaRecorder: null, stream: null, chunks: [], startAt: 0, timer: 0 },
     translateLongPressTimer: 0
   };
 
@@ -177,6 +177,10 @@
     });
   }
 
+  function isAutoText(text) {
+    var clean = norm(String(text || '').replace(/[•・·|｜_／/\\-]+/g, ' '));
+    return !clean || /^(?:新动态|图片分享|图片动态|语音消息|语音动态|voice message|audio message|image|photo|picture)(?:\s*:??\s*\d{1,2}:\d{2}(?::\d{2})?)?$/i.test(clean);
+  }
   function cleanDisplayText(text) {
     var lines = String(text || '')
       .replace(RE.tiktokGlobal, '')
@@ -189,13 +193,7 @@
       .filter(function (line) { return line && !isAutoText(line); });
     return lines.join('\n');
   }
-  function isAutoText(text) {
-    var clean = norm(String(text || '').replace(/[•・·|｜_／/\\-]+/g, ' '));
-    return !clean || /^(?:新动态|图片分享|图片动态|语音消息|语音动态|voice message|audio message|image|photo|picture)(?:\s*:??\s*\d{1,2}:\d{2}(?::\d{2})?)?$/i.test(clean);
-  }
-  function displayText(item) {
-    return cleanDisplayText(item && (item.text || item.title || ''));
-  }
+  function displayText(item) { return cleanDisplayText(item && (item.text || item.title || '')); }
   function isOwnAuthor(author) {
     var me = currentUser();
     if (!me || !author) return false;
@@ -216,7 +214,6 @@
       var dns = document.createElement('link'); dns.rel = 'dns-prefetch'; dns.href = href; document.head.appendChild(dns);
     });
   }
-
   function loadAsset(tag, url) {
     return new Promise(function (resolve, reject) {
       if (tag === 'script' && window.Swiper) return resolve();
@@ -224,7 +221,7 @@
       if (existing) {
         existing.addEventListener('load', resolve, { once: true });
         existing.addEventListener('error', reject, { once: true });
-        if (tag === 'link') return resolve();
+        if (tag === 'link' || (tag === 'script' && window.Swiper)) return resolve();
         return;
       }
       var el = document.createElement(tag);
@@ -242,18 +239,19 @@
     return loadAsset('link', CONFIG.swiperCdnCss)
       .then(function () { return loadAsset('script', CONFIG.swiperCdnJs); })
       .then(function () { return !!window.Swiper; })
-      .catch(function (err) { console.warn('[peipe-video] Swiper load failed, fallback gestures will be used', err); return false; });
+      .catch(function (err) { console.warn('[peipe-video] Swiper load failed', err); return false; });
   }
 
   function loadFeed(refresh) {
     if (state.feedLoading || (state.feedDone && !refresh)) return Promise.resolve();
     state.feedLoading = true;
     if (refresh) {
-      state.feedPage = 1; state.feedDone = false; state.list = []; state.index = 0; state.players.clear();
+      state.feedPage = 1; state.feedDone = false; state.list = []; state.index = 0;
+      state.players.forEach(function (p) { try { if (p.iframe) p.iframe.remove(); } catch (e) {} });
+      state.players.clear(); state.imageSwipers.clear();
       updateSwiperSlides(true);
     }
-    var page = state.feedPage;
-    return apiFetch('/api/v3/plugins/peipe-video/feed?page=' + page + '&pageSize=' + CONFIG.pageSize)
+    return apiFetch('/api/v3/plugins/peipe-video/feed?page=' + state.feedPage + '&pageSize=' + CONFIG.pageSize)
       .then(function (json) {
         var payload = json.response || json;
         var items = (payload.items || []).map(function (item) {
@@ -281,12 +279,12 @@
     state.swiper = new window.Swiper(el, {
       direction: 'vertical',
       slidesPerView: 1,
-      speed: 260,
+      speed: 240,
       threshold: 2,
       touchStartPreventDefault: false,
       touchMoveStopPropagation: false,
       touchReleaseOnEdges: false,
-      resistanceRatio: 0.38,
+      resistanceRatio: 0.34,
       longSwipesRatio: 0.12,
       followFinger: true,
       watchSlidesProgress: true,
@@ -295,8 +293,8 @@
       passiveListeners: false,
       virtual: {
         enabled: true,
-        addSlidesBefore: 2,
-        addSlidesAfter: Math.max(10, CONFIG.preloadAhead + 4),
+        addSlidesBefore: 1,
+        addSlidesAfter: Math.max(5, CONFIG.preloadAhead + 2),
         slides: state.list.map(renderSlideHtml)
       },
       on: {
@@ -309,13 +307,13 @@
         slideChangeTransitionStart: function (swiper) {
           state.hasInteracted = true;
           hideComposerFab();
-          pauseSlide(swiper.previousIndex);
+          warmVideoWindow(typeof swiper.activeIndex === 'number' ? swiper.activeIndex : state.index);
+          if (typeof swiper.previousIndex === 'number') pauseSlide(swiper.previousIndex);
         },
         slideChange: function (swiper) {
           state.index = swiper.activeIndex || 0;
           if (state.index >= state.list.length - 4) loadFeed(false);
           afterVirtualUpdate();
-          pauseOtherPlayers(playerKey(state.index, (state.list[state.index] && state.list[state.index].tiktoks && state.list[state.index].tiktoks[0] && state.list[state.index].tiktoks[0].videoId) || ''));
           activateCurrent(false);
         },
         virtualUpdate: function () { afterVirtualUpdate(); },
@@ -325,10 +323,7 @@
     return true;
   }
   function updateSwiperSlides(reset) {
-    if (!state.swiper) {
-      initSwiper();
-      return;
-    }
+    if (!state.swiper) { initSwiper(); return; }
     state.swiper.virtual.slides = state.list.map(renderSlideHtml);
     state.swiper.virtual.update(true);
     if (reset) state.swiper.slideTo(0, 0);
@@ -339,35 +334,23 @@
     $$('.pv-slide-item', state.root).forEach(function (slide) {
       var index = Number(slide.dataset.index || -1);
       slide.classList.toggle('is-active', index === state.index);
-      prepareSlide(index, false);
     });
     initImageSwipers();
-    preloadNextVideos(state.index);
+    warmVideoWindow(state.index);
   }
 
   function renderSlideHtml(item, index) {
     item = item || {};
     var text = displayText(item);
-    var hasText = !!text;
     var hasVideo = !!(item.tiktoks && item.tiktoks[0]);
     var images = (item.images || []).slice(0, CONFIG.imageMax);
-    var imageIndex = getImageIndex(item);
-    var mediaHtml = '';
-    if (hasVideo) {
-      mediaHtml = '<div class="pv-video-shell" data-video-id="' + escapeHtml(item.tiktoks[0].videoId) + '"></div>';
-    } else if (images.length) {
-      mediaHtml = renderImageMain(item, imageIndex);
-    } else {
-      mediaHtml = '<div class="pv-error">这条动态没有 TikTok 或图片</div>';
-    }
-
+    var mediaHtml = hasVideo ? '<div class="pv-video-shell" data-video-id="' + escapeHtml(item.tiktoks[0].videoId) + '"></div>' :
+      (images.length ? renderImageMain(item) : '<div class="pv-error">这条动态没有 TikTok 或图片</div>');
     var author = item.author || {};
     var avatar = avatarSrc(author);
     var avatarHtml = avatar ? '<img class="pv-avatar" src="' + escapeHtml(avatar) + '" alt="avatar">' : '<div class="pv-avatar"></div>';
     var following = readFollow(author) || item.viewer.following;
     var liked = !!(readVote(item.pid, item.tid) || item.viewer.liked);
-    var showImagePill = hasVideo && images.length;
-
     return '' +
       '<section class="pv-slide-item ' + (hasVideo ? 'is-video' : 'is-image') + '" data-index="' + index + '" data-tid="' + escapeHtml(item.tid || '') + '">' +
         '<div class="pv-media">' + mediaHtml + '</div>' +
@@ -383,17 +366,18 @@
         '</div>' +
         '<div class="pv-desc">' +
           '<a class="pv-username" href="' + authorHref(author) + '">@' + escapeHtml(author.username || author.userslug || '用户') + '</a>' +
-          (hasText ? '<div class="pv-text-row" data-index="' + index + '"><span class="pv-text-main">' + escapeHtml(text) + '</span> <button type="button" class="pv-translate-btn" data-index="' + index + '" aria-label="' + TEXT.translate + '" title="' + TEXT.translate + '">' + iconTranslate() + '</button></div><div class="pv-translated"></div>' : '') +
+          (text ? '<div class="pv-text-row" data-index="' + index + '"><span class="pv-text-main">' + escapeHtml(text) + '</span> <button type="button" class="pv-translate-btn" data-index="' + index + '" aria-label="' + TEXT.translate + '" title="' + TEXT.translate + '">' + iconTranslate() + '</button></div><div class="pv-translated"></div>' : '') +
           '<div class="pv-time">' + relativeTime(item.createdAt) + '</div>' +
         '</div>' +
       '</section>';
   }
-  function iconHeart(active) { return '<svg class="pv-heart-svg" viewBox="0 0 48 48" aria-hidden="true"><path d="M24 41s-2.2-1.3-5.2-3.4C10.2 31.4 5 25.8 5 18.6 5 12.7 9.5 8 15.2 8c3.5 0 6.6 1.8 8.8 4.7C26.2 9.8 29.3 8 32.8 8 38.5 8 43 12.7 43 18.6c0 7.2-5.2 12.8-13.8 19C26.2 39.7 24 41 24 41z"></path></svg>'; }
+  function iconHeart() { return '<svg class="pv-heart-svg" viewBox="0 0 48 48" aria-hidden="true"><path d="M24 41s-2.2-1.3-5.2-3.4C10.2 31.4 5 25.8 5 18.6 5 12.7 9.5 8 15.2 8c3.5 0 6.6 1.8 8.8 4.7C26.2 9.8 29.3 8 32.8 8 38.5 8 43 12.7 43 18.6c0 7.2-5.2 12.8-13.8 19C26.2 39.7 24 41 24 41z"></path></svg>'; }
   function iconComment() { return '<svg class="pv-comment-svg" viewBox="0 0 48 48" aria-hidden="true"><path d="M24 7.5c-9.8 0-17.5 6.8-17.5 15.2 0 5.4 3.2 10.2 8 12.9l-.8 5.2 6.1-3.4c1.4.3 2.8.4 4.2.4 9.8 0 17.5-6.8 17.5-15.1S33.8 7.5 24 7.5z"></path><circle cx="17.4" cy="23.3" r="2.1"></circle><circle cx="24" cy="23.3" r="2.1"></circle><circle cx="30.6" cy="23.3" r="2.1"></circle></svg>'; }
   function iconTranslate() { return '<i class="fa-solid fa-language" aria-hidden="true"></i>'; }
   function iconMic() { return '<svg class="pv-mic-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3z"></path><path d="M5 11a7 7 0 0 0 14 0M12 18v3m-4 0h8"></path></svg>'; }
   function iconSend() { return '<svg class="pv-send-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h14M13 6l6 6-6 6"></path></svg>'; }
   function iconPhoto() { return '<svg viewBox="0 0 48 48" aria-hidden="true"><path d="M10 10h28a4 4 0 0 1 4 4v20a4 4 0 0 1-4 4H10a4 4 0 0 1-4-4V14a4 4 0 0 1 4-4zm5 23h18l-6-8-4 5-3-4-5 7zm2-13a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"></path></svg>'; }
+
   function getImageIndex(item) {
     var key = String(item && (item.tid || item.pid || state.list.indexOf(item)) || '');
     return Math.max(0, Number(state.imageIndex.get(key) || 0));
@@ -403,22 +387,25 @@
     var max = Math.max(0, (item.images || []).length - 1);
     state.imageIndex.set(key, Math.max(0, Math.min(max, index)));
   }
-  function renderImageMain(item, idx) {
+  function renderImageMain(item) {
     var images = (item.images || []).slice(0, CONFIG.imageMax);
     var slideIndex = state.list.indexOf(item);
     var slides = images.map(function (src, i) {
       return '<div class="swiper-slide pv-image-swiper-slide"><img src="' + escapeHtml(src) + '" alt="image ' + (i + 1) + '"></div>';
     }).join('');
-    var dots = images.length > 1 ? '<div class="pv-image-pagination"></div>' : '';
     return '<div class="pv-image-main" data-index="' + slideIndex + '">' +
-      '<div class="pv-image-swiper swiper" data-index="' + slideIndex + '"><div class="swiper-wrapper">' + slides + '</div>' + dots + '</div>' +
-      '</div>';
+      '<div class="pv-image-swiper swiper" data-index="' + slideIndex + '"><div class="swiper-wrapper">' + slides + '</div>' +
+      (images.length > 1 ? '<div class="pv-image-pagination"></div>' : '') + '</div></div>';
   }
   function initImageSwipers() {
     if (!window.Swiper) return;
+    var live = new Set();
     $$('.pv-image-swiper', state.root).forEach(function (el) {
       var idx = Number(el.dataset.index || -1);
-      if (state.imageSwipers.has(idx) && state.imageSwipers.get(idx).el === el) return;
+      live.add(idx);
+      var old = state.imageSwipers.get(idx);
+      if (old && old.el === el) return;
+      if (old) { try { old.destroy(true, true); } catch (e) {} state.imageSwipers.delete(idx); }
       var item = state.list[idx];
       if (!item || !(item.images && item.images.length)) return;
       var swiper = new window.Swiper(el, {
@@ -434,15 +421,11 @@
       if (getImageIndex(item) > 0) swiper.slideTo(getImageIndex(item), 0);
       state.imageSwipers.set(idx, swiper);
     });
-  }
-  function updateImageSlide(index) {
-    var item = state.list[index];
-    var slide = findSlide(index);
-    if (!item || !slide || !(item.images && item.images.length)) return;
-    var media = $('.pv-media', slide);
-    if (!media) return;
-    media.innerHTML = renderImageMain(item, getImageIndex(item));
-    initImageSwipers();
+    state.imageSwipers.forEach(function (sw, idx) {
+      if (live.has(idx)) return;
+      try { sw.destroy(true, true); } catch (e) {}
+      state.imageSwipers.delete(idx);
+    });
   }
   function findSlide(index) { return $('.pv-slide-item[data-index="' + index + '"]', state.root); }
 
@@ -467,6 +450,10 @@
     return 'https://www.tiktok.com/player/v1/' + encodeURIComponent(videoId) + '?' + params.toString();
   }
   function playerKey(index, videoId) { return index + ':' + videoId; }
+  function isWarmIndex(index) {
+    var ahead = Math.max(1, CONFIG.preloadVideoAhead || 2);
+    return index === state.index || index === state.index - 1 || (index > state.index && index <= state.index + ahead);
+  }
   function ensureTikTokPlayer(index, autoplay) {
     var item = state.list[index];
     var slide = findSlide(index);
@@ -474,7 +461,7 @@
     var tk = item.tiktoks[0];
     var key = playerKey(index, tk.videoId);
     var player = state.players.get(key);
-    if (player && player.iframe && player.iframe.parentNode) return player;
+    if (player && player.iframe && player.iframe.parentNode && player.iframe.src !== 'about:blank') return player;
     var shell = $('.pv-video-shell', slide);
     if (!shell) return null;
     shell.innerHTML = '';
@@ -482,7 +469,7 @@
     iframe.className = 'pv-tiktok-frame';
     iframe.src = buildPlayerUrl(tk.videoId, !!autoplay);
     iframe.allow = 'autoplay; fullscreen; encrypted-media; picture-in-picture';
-    iframe.loading = 'eager';
+    iframe.loading = index === state.index ? 'eager' : 'lazy';
     iframe.fetchPriority = index === state.index ? 'high' : 'low';
     iframe.referrerPolicy = 'strict-origin-when-cross-origin';
     iframe.title = 'TikTok Player';
@@ -497,38 +484,26 @@
     return player;
   }
   function prepareSlide(index, autoplay) {
-    if (index < 0 || index >= state.list.length) return;
+    if (index < 0 || index >= state.list.length) return null;
     var item = state.list[index];
-    if (!item || !(item.tiktoks && item.tiktoks[0])) return;
-    var player = ensureTikTokPlayer(index, !!autoplay || (state.soundUnlocked && index === state.index));
-    if (player && autoplay && player.iframe && !/autoplay=1/.test(player.iframe.src)) {
-      player.iframe.src = buildPlayerUrl(player.videoId, true);
-    }
+    if (!item || !(item.tiktoks && item.tiktoks[0])) return null;
+    return ensureTikTokPlayer(index, !!autoplay);
   }
-  function preloadNextVideos(fromIndex) {
-    var found = 0;
-    var maxScan = Math.min(state.list.length - 1, fromIndex + Math.max(12, CONFIG.preloadAhead + 8));
-    for (var i = Math.max(0, fromIndex); i <= maxScan && found < (CONFIG.preloadVideoAhead || 3); i += 1) {
-      var it = state.list[i];
-      if (it && it.tiktoks && it.tiktoks[0]) {
-        prepareSlide(i, i === state.index && (state.hasInteracted || state.soundUnlocked));
-        found += 1;
+  function warmVideoWindow(fromIndex) {
+    if (fromIndex < 0 || fromIndex >= state.list.length) return;
+    prepareSlide(fromIndex, !!(state.hasInteracted || state.soundUnlocked));
+    var warmed = 0;
+    var maxScan = Math.min(state.list.length - 1, fromIndex + Math.max(8, CONFIG.preloadAhead + 4));
+    for (var i = fromIndex + 1; i <= maxScan && warmed < (CONFIG.preloadVideoAhead || 2); i += 1) {
+      var item = state.list[i];
+      if (item && item.tiktoks && item.tiktoks[0]) {
+        ensureTikTokPlayer(i, false);
+        warmed += 1;
       }
     }
   }
-  function activateCurrent(first) {
-    state.index = state.swiper ? state.swiper.activeIndex : state.index;
-    $$('.pv-slide-item', state.root).forEach(function (slide) {
-      var idx = Number(slide.dataset.index || -1);
-      slide.classList.toggle('is-active', idx === state.index);
-      if (idx !== state.index) pauseSlide(idx);
-    });
-    preloadNextVideos(state.index);
-    playSlide(state.index, !!(state.hasInteracted || state.soundUnlocked));
-    prunePlayers();
-  }
   function sendToPlayer(iframe, type, value) {
-    if (!iframe || !iframe.contentWindow) return;
+    if (!iframe || !iframe.contentWindow || iframe.src === 'about:blank') return;
     var msg = { 'x-tiktok-player': true, type: type };
     if (arguments.length >= 3) msg.value = value;
     iframe.contentWindow.postMessage(msg, 'https://www.tiktok.com');
@@ -538,22 +513,17 @@
     sendToPlayer(player.iframe, 'pause');
     setTimeout(function () { sendToPlayer(player.iframe, 'pause'); }, 60);
     setTimeout(function () {
-      if (!player || !player.iframe || player.index === state.index) return;
+      if (!player || !player.iframe || player.index === state.index || isWarmIndex(player.index)) return;
       try { player.iframe.src = 'about:blank'; } catch (e) {}
-      player.ready = false;
-      player.status = 'paused';
-      player.wantPlay = false;
+      player.ready = false; player.status = 'paused'; player.wantPlay = false;
     }, 180);
   }
   function playSlide(index, userGesture) {
     var item = state.list[index];
-    if (!item || !(item.tiktoks && item.tiktoks[0])) { preloadNextVideos(index); return; }
+    if (!item || !(item.tiktoks && item.tiktoks[0])) { warmVideoWindow(index); return; }
     var player = ensureTikTokPlayer(index, !!userGesture);
     if (!player || !player.iframe) return;
     player.wantPlay = true;
-    if ((userGesture || state.soundUnlocked) && player.iframe && !/autoplay=1/.test(player.iframe.src)) {
-      player.iframe.src = buildPlayerUrl(player.videoId, true);
-    }
     pauseOtherPlayers(player.key);
     var slide = findSlide(index);
     if (slide) slide.classList.add('is-loading');
@@ -563,13 +533,17 @@
     setTimeout(function () { sendToPlayer(player.iframe, 'play'); sendToPlayer(player.iframe, 'unMute'); }, 80);
     setTimeout(function () { sendToPlayer(player.iframe, 'unMute'); sendToPlayer(player.iframe, 'play'); }, 260);
     setTimeout(function () { sendToPlayer(player.iframe, 'unMute'); sendToPlayer(player.iframe, 'play'); }, 720);
-    setTimeout(function () { if (player.wantPlay && player.status !== 'playing') markSlidePlaying(index); }, 1800);
+    setTimeout(function () { if (player.wantPlay && player.status !== 'playing') markSlidePlaying(index); }, 1600);
   }
   function pauseSlide(index) {
     state.players.forEach(function (p) {
       if (p.index !== index) return;
       p.wantPlay = false; p.status = 'paused';
-      hardStopPlayer(p);
+      if (p.iframe) {
+        sendToPlayer(p.iframe, 'pause');
+        setTimeout(function () { sendToPlayer(p.iframe, 'pause'); }, 80);
+      }
+      if (!isWarmIndex(p.index)) hardStopPlayer(p);
     });
     var slide = findSlide(index);
     if (slide) slide.classList.remove('is-playing', 'is-loading');
@@ -577,24 +551,38 @@
   function pauseOtherPlayers(currentKey) {
     state.players.forEach(function (p, key) {
       if (key === currentKey) return;
-      var wasActive = p.wantPlay || p.status === 'playing' || p.index < state.index || Math.abs(p.index - state.index) > CONFIG.preloadAhead;
+      var far = !isWarmIndex(p.index) || Math.abs(p.index - state.index) > CONFIG.preloadAhead;
       p.wantPlay = false; p.status = 'paused';
       if (p.iframe) {
         sendToPlayer(p.iframe, 'pause');
-        setTimeout(function(){ sendToPlayer(p.iframe, 'pause'); }, 80);
-        if (wasActive) hardStopPlayer(p);
+        setTimeout(function () { sendToPlayer(p.iframe, 'pause'); }, 80);
+        if (far) hardStopPlayer(p);
       }
       var slide = findSlide(p.index);
       if (slide) slide.classList.remove('is-playing', 'is-loading');
     });
   }
   function prunePlayers() {
-    var keep = CONFIG.preloadAhead + 2;
+    var keep = Math.max(CONFIG.preloadAhead + 1, (CONFIG.preloadVideoAhead || 2) + 2);
     state.players.forEach(function (p, key) {
-      if (Math.abs(p.index - state.index) <= keep) return;
+      if (Math.abs(p.index - state.index) <= keep || isWarmIndex(p.index)) return;
       try { if (p.iframe) { sendToPlayer(p.iframe, 'pause'); p.iframe.src = 'about:blank'; p.iframe.remove(); } } catch (e) {}
       state.players.delete(key);
     });
+  }
+  function activateCurrent() {
+    state.index = state.swiper ? state.swiper.activeIndex : state.index;
+    $$('.pv-slide-item', state.root).forEach(function (slide) {
+      var idx = Number(slide.dataset.index || -1);
+      slide.classList.toggle('is-active', idx === state.index);
+      if (idx !== state.index) slide.classList.remove('is-playing', 'is-loading');
+    });
+    warmVideoWindow(state.index);
+    var item = state.list[state.index];
+    var currentKey = item && item.tiktoks && item.tiktoks[0] ? playerKey(state.index, item.tiktoks[0].videoId) : '';
+    pauseOtherPlayers(currentKey);
+    playSlide(state.index, !!(state.hasInteracted || state.soundUnlocked));
+    prunePlayers();
   }
   function markSlidePlaying(index) {
     var slide = findSlide(index);
@@ -620,9 +608,14 @@
       }
       if (data.type === 'onStateChange') {
         var value = Number(data.value); var word = String(data.value || '').toLowerCase();
-        if (value === 1 || word === 'playing') { player.status = 'playing'; state.soundUnlocked = true; safeJsonSet('pv-sound-unlocked', true); pauseOtherPlayers(player.key); markSlidePlaying(player.index); }
-        else if (value === 2 || value === 0 || word === 'paused' || word === 'ended') { player.status = 'paused'; var s = findSlide(player.index); if (s) s.classList.remove('is-playing', 'is-loading'); }
-        else if (value === 3 || word === 'buffering') { var s2 = findSlide(player.index); if (s2 && player.wantPlay) s2.classList.add('is-loading'); }
+        if (value === 1 || word === 'playing') {
+          player.status = 'playing'; state.soundUnlocked = true; safeJsonSet('pv-sound-unlocked', true);
+          pauseOtherPlayers(player.key); markSlidePlaying(player.index);
+        } else if (value === 2 || value === 0 || word === 'paused' || word === 'ended') {
+          player.status = 'paused'; var s = findSlide(player.index); if (s) s.classList.remove('is-playing', 'is-loading');
+        } else if (value === 3 || word === 'buffering') {
+          var s2 = findSlide(player.index); if (s2 && player.wantPlay) s2.classList.add('is-loading');
+        }
       }
     });
   });
@@ -636,36 +629,17 @@
       .catch(function () { return ''; });
   }
 
-  function handleTap(e, index) {
-    var item = state.list[index];
-    if (!item) return;
-    var now = Date.now(); var last = state.lastTap;
-    var dist = Math.hypot(e.clientX - last.x, e.clientY - last.y);
-    if (last.time && now - last.time < CONFIG.doubleTapMs && dist < 44) {
-      clearTimeout(last.timer); last.time = 0;
-      toggleLike(item, findSlide(index), true, { x: e.clientX, y: e.clientY });
-      return;
-    }
-    last.time = now; last.x = e.clientX; last.y = e.clientY;
-    clearTimeout(last.timer);
-    last.timer = setTimeout(function () {
-      if (!(item.tiktoks && item.tiktoks[0])) return;
-      var player = Array.from(state.players.values()).find(function (p) { return p.index === index; });
-      if (player && player.status === 'playing') pauseSlide(index);
-      else { state.hasInteracted = true; playSlide(index, true); }
-    }, CONFIG.doubleTapMs + 20);
-  }
-  function showHeart(x, y) {
-    var heart = document.createElement('div');
-    heart.className = 'pv-heart-burst'; heart.textContent = '♥'; heart.style.left = x + 'px'; heart.style.top = y + 'px';
-    state.root.appendChild(heart); setTimeout(function () { heart.remove(); }, 760);
-  }
-
   function localUserSuffix() { var u = currentUser(); return String(u && u.uid || 'guest'); }
   function voteStoreKey() { return 'pv-vote-state:' + localUserSuffix(); }
   function voteStore() { return safeJsonGet(voteStoreKey(), {}); }
   function readVote(pid, tid) { var s = voteStore(); if (pid && s['pid:' + pid] !== undefined) return !!s['pid:' + pid]; if (tid && s['tid:' + tid] !== undefined) return !!s['tid:' + tid]; return false; }
   function writeVote(pid, tid, voted) { var s = voteStore(); if (pid) s['pid:' + pid] = !!voted; if (tid) s['tid:' + tid] = !!voted; safeJsonSet(voteStoreKey(), s); }
+  function updateLikeUi(slide, item) {
+    if (!slide) return; var btn = $('.pv-like', slide); if (!btn) return;
+    btn.classList.toggle('is-active', !!item.viewer.liked);
+    var icon = $('.pv-action-icon', btn); if (icon) icon.innerHTML = iconHeart();
+    var count = $('span:last-child', btn); if (count) count.textContent = formatCount(item.counts.likes);
+  }
   function toggleLike(item, slide, optimistic, point) {
     if (!isLoggedIn()) return alertError(TEXT.loginFirst);
     if (!item.pid) return alertError(TEXT.likeFail);
@@ -681,14 +655,16 @@
       writeVote(item.pid, item.tid, old); updateLikeUi(slide, item); alertError(next ? TEXT.likeFail : TEXT.unlikeFail);
     });
   }
-  function updateLikeUi(slide, item) {
-    if (!slide) return; var btn = $('.pv-like', slide); if (!btn) return;
-    btn.classList.toggle('is-active', !!item.viewer.liked); var icon = $('.pv-action-icon', btn); if (icon) icon.innerHTML = iconHeart(!!item.viewer.liked); var count = $('span:last-child', btn); if (count) count.textContent = formatCount(item.counts.likes);
+  function showHeart(x, y) {
+    var heart = document.createElement('div');
+    heart.className = 'pv-heart-burst'; heart.textContent = '♥'; heart.style.left = x + 'px'; heart.style.top = y + 'px';
+    state.root.appendChild(heart); setTimeout(function () { heart.remove(); }, 760);
   }
   function followStoreKey() { return 'pv-follow-state:' + localUserSuffix(); }
   function followStore() { return safeJsonGet(followStoreKey(), {}); }
   function readFollow(author) { if (!author) return false; var s = followStore(); if (author.uid && s['uid:' + author.uid] !== undefined) return !!s['uid:' + author.uid]; if (author.userslug && s['slug:' + String(author.userslug).toLowerCase()] !== undefined) return !!s['slug:' + String(author.userslug).toLowerCase()]; return false; }
   function writeFollow(author, following) { var s = followStore(); if (author.uid) s['uid:' + author.uid] = !!following; if (author.userslug) s['slug:' + String(author.userslug).toLowerCase()] = !!following; safeJsonSet(followStoreKey(), s); }
+  function updateFollowUi(slide, following) { var btn = $('.pv-follow-plus', slide); if (!btn) return; btn.classList.toggle('is-following', !!following); btn.textContent = following ? '✓' : '+'; }
   function toggleFollow(item, slide) {
     if (!isLoggedIn()) return alertError(TEXT.loginFirst);
     var author = item.author || {}; if (!author.uid) return alertError(TEXT.followFail);
@@ -697,17 +673,13 @@
       .then(function () { alertSuccess(next ? TEXT.followed : TEXT.unfollowed); })
       .catch(function () { writeFollow(author, old); updateFollowUi(slide, old); alertError(next ? TEXT.followFail : TEXT.unfollowFail); });
   }
-  function updateFollowUi(slide, following) { var btn = $('.pv-follow-plus', slide); if (!btn) return; btn.classList.toggle('is-following', !!following); btn.textContent = following ? '✓' : '+'; }
 
   var LANGUAGE_META = {
-    auto: { flag: '🌐', label: '自动检测' },
-    zh: { flag: '🇨🇳', label: '中文' }, en: { flag: '🇺🇸', label: 'English' },
-    my: { flag: '🇲🇲', label: 'မြန်မာ' }, mm: { flag: '🇲🇲', label: 'မြန်မာ' },
-    th: { flag: '🇹🇭', label: 'ไทย' }, vi: { flag: '🇻🇳', label: 'Tiếng Việt' },
-    km: { flag: '🇰🇭', label: 'ភាសាខ្មែរ' }, lo: { flag: '🇱🇦', label: 'ລາວ' },
-    ja: { flag: '🇯🇵', label: '日本語' }, ko: { flag: '🇰🇷', label: '한국어' },
-    ms: { flag: '🇲🇾', label: 'Malay' }, tl: { flag: '🇵🇭', label: 'Tagalog' },
-    id: { flag: '🇮🇩', label: 'Indonesia' }, fr: { flag: '🇫🇷', label: 'Français' },
+    auto: { flag: '🌐', label: '自动检测' }, zh: { flag: '🇨🇳', label: '中文' }, en: { flag: '🇺🇸', label: 'English' },
+    my: { flag: '🇲🇲', label: 'မြန်မာ' }, mm: { flag: '🇲🇲', label: 'မြန်မာ' }, th: { flag: '🇹🇭', label: 'ไทย' },
+    vi: { flag: '🇻🇳', label: 'Tiếng Việt' }, km: { flag: '🇰🇭', label: 'ភាសាខ្មែរ' }, lo: { flag: '🇱🇦', label: 'ລາວ' },
+    ja: { flag: '🇯🇵', label: '日本語' }, ko: { flag: '🇰🇷', label: '한국어' }, ms: { flag: '🇲🇾', label: 'Malay' },
+    tl: { flag: '🇵🇭', label: 'Tagalog' }, id: { flag: '🇮🇩', label: 'Indonesia' }, fr: { flag: '🇫🇷', label: 'Français' },
     de: { flag: '🇩🇪', label: 'Deutsch' }, es: { flag: '🇪🇸', label: 'Español' }, ru: { flag: '🇷🇺', label: 'Русский' }
   };
   var DEFAULT_AI_PROMPT = '你是专业论坛翻译助手。请把用户提供的内容从 {{sourceLang}} 翻译为 {{targetLang}}。保留原有语气、换行、链接、用户名、表情和列表结构。只输出译文，不要解释。';
@@ -722,9 +694,7 @@
       provider: saved.provider === 'ai' ? 'ai' : 'google',
       sourceLang: normalizeLang(saved.sourceLang, 'auto'),
       targetLang: normalizeLang(saved.targetLang, (navigator.language || 'zh').split('-')[0] || 'zh'),
-      aiEndpoint: saved.aiEndpoint || '',
-      aiModel: saved.aiModel || '',
-      aiApiKey: saved.aiApiKey || '',
+      aiEndpoint: saved.aiEndpoint || '', aiModel: saved.aiModel || '', aiApiKey: saved.aiApiKey || '',
       aiPrompt: saved.aiPrompt || DEFAULT_AI_PROMPT,
       temperature: Number.isFinite(Number(saved.temperature)) ? Number(saved.temperature) : 0.3
     };
@@ -744,8 +714,7 @@
     if (!settings.aiEndpoint || !settings.aiModel || !settings.aiApiKey) return Promise.reject(new Error('AI translate not configured'));
     var prompt = String(settings.aiPrompt || DEFAULT_AI_PROMPT).replace(/{{\s*sourceLang\s*}}/gi, settings.sourceLang || 'auto').replace(/{{\s*targetLang\s*}}/gi, settings.targetLang || 'zh');
     return fetch(normalizeAiEndpoint(settings.aiEndpoint), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + settings.aiApiKey },
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + settings.aiApiKey },
       body: JSON.stringify({ model: settings.aiModel, temperature: settings.temperature, messages: [{ role: 'system', content: prompt }, { role: 'user', content: text }] })
     }).then(function (res) { return res.json().catch(function () { return {}; }).then(function (json) { if (!res.ok) throw new Error(json.error && json.error.message || 'AI translate failed'); return json; }); })
       .then(function (json) { var out = extractAiText(json); if (!out) throw new Error('empty AI translation'); return out; });
@@ -780,36 +749,11 @@
     var panel = $('.pv-translate-panel', state.root); var backdrop = $('.pv-modal-backdrop', state.root); var s = getTranslateSettings();
     $('[name="sourceLang"]', panel).value = s.sourceLang || 'auto'; $('[name="targetLang"]', panel).value = s.targetLang || 'zh'; $('[name="provider"]', panel).value = s.provider || 'google';
     $('[name="aiEndpoint"]', panel).value = s.aiEndpoint || ''; $('[name="aiModel"]', panel).value = s.aiModel || ''; $('[name="aiApiKey"]', panel).value = s.aiApiKey || ''; $('[name="aiPrompt"]', panel).value = s.aiPrompt || DEFAULT_AI_PROMPT;
-    panel.classList.toggle('is-ai', s.provider === 'ai'); $$('.pv-provider-tab', panel).forEach(function(t){ t.classList.toggle('is-active', (t.dataset.provider || 'google') === (s.provider || 'google')); });
+    panel.classList.toggle('is-ai', s.provider === 'ai');
+    $$('.pv-provider-tab', panel).forEach(function (t) { t.classList.toggle('is-active', (t.dataset.provider || 'google') === (s.provider || 'google')); });
     panel.classList.add('is-open'); backdrop.classList.add('is-open');
   }
   function closeTranslateSettings() { $('.pv-translate-panel', state.root).classList.remove('is-open'); $('.pv-modal-backdrop', state.root).classList.remove('is-open'); }
-
-  function openViewer(images, index) {
-    if (!images || !images.length) return;
-    state.viewer.images = images.slice(0, CONFIG.imageMax);
-    state.viewer.index = Math.max(0, Math.min(state.viewer.images.length - 1, Number(index || 0)));
-    var viewer = $('.pv-viewer', state.root);
-    viewer.classList.add('is-open');
-    updateViewer();
-  }
-  function updateViewer() {
-    var viewer = $('.pv-viewer', state.root);
-    var wrapper = $('.pv-viewer .swiper-wrapper', state.root);
-    wrapper.innerHTML = state.viewer.images.map(function (src, i) {
-      return '<div class="swiper-slide"><img src="' + escapeHtml(src) + '" alt="image ' + (i + 1) + '"></div>';
-    }).join('');
-    if (state.viewer.swiper) { try { state.viewer.swiper.destroy(true, true); } catch (e) {} state.viewer.swiper = null; }
-    if (window.Swiper) {
-      state.viewer.swiper = new window.Swiper($('.pv-viewer-swiper', viewer), {
-        direction: 'horizontal', slidesPerView: 1, speed: 220, initialSlide: state.viewer.index,
-        pagination: { el: $('.pv-viewer-pagination', viewer), clickable: false },
-        on: { slideChange: function (sw) { state.viewer.index = sw.activeIndex || 0; } }
-      });
-    }
-  }
-  function closeViewer() { $('.pv-viewer', state.root).classList.remove('is-open'); }
-  function moveViewer(delta) { if (state.viewer.swiper) state.viewer.swiper.slideTo(Math.max(0, Math.min(state.viewer.images.length - 1, state.viewer.index + delta))); }
 
   function isAudioHref(href) { return RE.audioExt.test(String(href || '').split('?')[0]) || /[?&](?:haa8dur|dur|duration)=/i.test(String(href || '')); }
   function parseDurationFromUrl(url) { try { var u = new URL(String(url || ''), location.origin); var raw = u.searchParams.get('haa8dur') || u.searchParams.get('dur') || u.searchParams.get('duration'); return Math.max(0, Number(raw || 0) || 0); } catch (e) { var m = String(url || '').match(/[?&](?:haa8dur|dur|duration)=(\d+(?:\.\d+)?)/i); return m ? Number(m[1]) || 0 : 0; } }
@@ -832,6 +776,14 @@
     else { audio.pause(); card.classList.remove('playing'); $('.pv-voice-play', card).textContent = '▶'; }
   }
 
+  function normalizeAuthor(user, fallback) {
+    user = user || {}; fallback = fallback || {};
+    var uid = String(user.uid || user.userId || user.userid || fallback.uid || '');
+    var username = norm(user.displayname || user.displayName || user.username || fallback.username || fallback.displayname || fallback.userslug || '用户');
+    var userslug = String(user.userslug || fallback.userslug || username || '').replace(/^@/, '');
+    var picture = user.picture || user.uploadedpicture || user.avatar || fallback.picture || fallback.uploadedpicture || '';
+    return { uid: uid, username: username, userslug: userslug, picture: picture };
+  }
   function openComments(item) {
     state.comments.item = item; state.comments.replyTo = null;
     var panel = $('.pv-comments-panel', state.root);
@@ -841,9 +793,8 @@
     $('.pv-comment-input', panel).placeholder = TEXT.commentPlaceholder; updateCommentActionButton();
     $('.pv-reply-bar', panel).classList.remove('is-open');
     apiFetch('/api/topic/' + encodeURIComponent(item.tid)).then(function (json) {
-      var posts = Array.isArray(json.posts) ? json.posts.slice(1) : [];
-      state.comments.posts = posts;
-      renderComments(posts);
+      state.comments.posts = Array.isArray(json.posts) ? json.posts.slice(1) : [];
+      renderComments(state.comments.posts);
     }).catch(function () { $('.pv-comments-list', panel).innerHTML = '<div class="pv-meta">加载失败，<a href="' + item.href + '">' + TEXT.openTopic + '</a></div>'; });
   }
   function closeComments() { stopCommentRecording(true); setCommentVoice(null, 0); $('.pv-comments-panel', state.root).classList.remove('is-open'); $('.pv-drawer-backdrop', state.root).classList.remove('is-open'); }
@@ -852,20 +803,12 @@
     if (!posts.length) { list.innerHTML = '<div class="pv-meta pv-empty-comments">' + TEXT.noComments + '</div>'; return; }
     list.innerHTML = posts.map(function (post) {
       var user = normalizeAuthor(post.user || post, {}); var content = post.content || post.raw || '';
-      var div = document.createElement('div'); div.innerHTML = content; var text = cleanDisplayText(div.textContent || content); var audios = extractAudiosFromContent(content);
+      var div = document.createElement('div'); div.innerHTML = content;
+      var text = cleanDisplayText(div.textContent || content); var audios = extractAudiosFromContent(content);
       var avatar = user.picture ? '<img src="' + escapeHtml(user.picture) + '" alt="avatar">' : '<img alt="avatar">';
-      var pid = String(post.pid || '');
-      var audioHtml = audios.map(function (a) { return renderVoiceCard(a, ''); }).join('');
-      return '<div class="pv-comment" data-pid="' + escapeHtml(pid) + '" data-username="' + escapeHtml(user.username || '用户') + '">' + avatar + '<div class="pv-comment-body"><div class="pv-comment-name">' + escapeHtml(user.username || '用户') + '</div>' + (text ? '<div class="pv-comment-text">' + escapeHtml(text) + '</div>' : '') + audioHtml + '<div class="pv-comment-translated"></div><div class="pv-comment-actions"><button type="button" class="pv-comment-reply">' + TEXT.replyTo + '</button><button type="button" class="pv-comment-translate" aria-label="' + TEXT.translate + '" title="' + TEXT.translate + '">' + iconTranslate() + '</button></div></div></div>';
+      return '<div class="pv-comment" data-pid="' + escapeHtml(post.pid || '') + '" data-username="' + escapeHtml(user.username || '用户') + '">' + avatar + '<div class="pv-comment-body"><div class="pv-comment-name">' + escapeHtml(user.username || '用户') + '</div>' +
+        (text ? '<div class="pv-comment-text">' + escapeHtml(text) + '</div>' : '') + audios.map(function (a) { return renderVoiceCard(a, ''); }).join('') + '<div class="pv-comment-translated"></div><div class="pv-comment-actions"><button type="button" class="pv-comment-reply">' + TEXT.replyTo + '</button><button type="button" class="pv-comment-translate" aria-label="' + TEXT.translate + '" title="' + TEXT.translate + '">' + iconTranslate() + '</button></div></div></div>';
     }).join('');
-  }
-  function normalizeAuthor(user, fallback) {
-    user = user || {}; fallback = fallback || {};
-    var uid = String(user.uid || user.userId || user.userid || fallback.uid || '');
-    var username = norm(user.displayname || user.displayName || user.username || fallback.username || fallback.displayname || fallback.userslug || '用户');
-    var userslug = String(user.userslug || fallback.userslug || username || '').replace(/^@/, '');
-    var picture = user.picture || user.uploadedpicture || user.avatar || fallback.picture || fallback.uploadedpicture || '';
-    return { uid: uid, username: username, userslug: userslug, picture: picture };
   }
   function setReplyTarget(commentEl) {
     var username = commentEl.dataset.username || '用户'; var pid = commentEl.dataset.pid || '';
@@ -883,14 +826,15 @@
     state.comments.voiceUrl = blob ? URL.createObjectURL(blob) : '';
     var wrap = $('.pv-comment-voice-preview', state.root);
     if (!wrap) return;
-    wrap.innerHTML = blob ? renderVoiceCard({ url: state.comments.voiceUrl }, 'is-preview') + '<button type="button" class="pv-comment-voice-remove">×</button>' : ''; wrap.classList.toggle('is-open', !!blob); updateCommentActionButton();
-    wrap.classList.toggle('is-open', !!blob);
+    wrap.innerHTML = blob ? renderVoiceCard({ url: state.comments.voiceUrl }, 'is-preview') + '<button type="button" class="pv-comment-voice-remove">×</button>' : '';
+    wrap.classList.toggle('is-open', !!blob); updateCommentActionButton();
   }
+  function recorderMime() { if (!window.MediaRecorder) return ''; return ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/ogg'].find(function (t) { return MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t); }) || ''; }
   function toggleCommentRecording() {
     var btn = $('.pv-comment-action-btn', state.root);
     if (state.comments.mediaRecorder && state.comments.mediaRecorder.state === 'recording') { stopCommentRecording(false); return; }
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) return alertError('当前浏览器不支持录音');
-    navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, echoCancellationType: 'system', noiseSuppression: true, autoGainControl: true } }).catch(function () { return navigator.mediaDevices.getUserMedia({ audio: true }); }).then(function (stream) {
+    navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } }).catch(function () { return navigator.mediaDevices.getUserMedia({ audio: true }); }).then(function (stream) {
       state.comments.stream = stream; state.comments.chunks = []; state.comments.startAt = Date.now();
       var mime = recorderMime(); var rec = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 16000 } : { audioBitsPerSecond: 16000 }); state.comments.mediaRecorder = rec;
       rec.ondataavailable = function (e) { if (e.data && e.data.size) state.comments.chunks.push(e.data); };
@@ -901,7 +845,7 @@
   function stopCommentRecording() { var rec = state.comments.mediaRecorder; if (rec && rec.state === 'recording') { try { rec.stop(); } catch (e) {} } if (state.comments.stream) state.comments.stream.getTracks().forEach(function (t) { t.stop(); }); clearInterval(state.comments.timer); var panel = $('.pv-comment-record-panel', state.root); if (panel) panel.classList.remove('is-open'); updateCommentActionButton(); }
   function updateCommentActionButton() { var btn = $('.pv-comment-action-btn', state.root); if (!btn) return; var input = $('.pv-comment-input', state.root); var hasText = !!norm(input && input.value); var recording = state.comments.mediaRecorder && state.comments.mediaRecorder.state === 'recording'; var hasVoice = !!state.comments.voiceBlob; btn.classList.toggle('is-send', hasText || hasVoice); btn.classList.toggle('recording', !!recording); btn.innerHTML = (hasText || hasVoice) ? iconSend() : (recording ? '<span class="pv-stop-dot"></span>' : iconMic()); }
   function handleCommentAction() { var input = $('.pv-comment-input', state.root); if ((input && norm(input.value)) || state.comments.voiceBlob) submitComment(); else toggleCommentRecording(); }
-
+  function appendDurationParam(url, seconds) { try { var u = new URL(url, location.origin); u.searchParams.set('haa8dur', String(Math.max(1, seconds || 1))); return u.origin === location.origin ? u.pathname + u.search + u.hash : u.toString(); } catch (e) { return url + (String(url).indexOf('?') === -1 ? '?' : '&') + 'haa8dur=' + encodeURIComponent(seconds || 1); } }
   function submitComment() {
     var item = state.comments.item; var input = $('.pv-comment-input', state.root); var text = norm(input.value);
     if (!item || (!text && !state.comments.voiceBlob)) return; if (!isLoggedIn()) return alertError(TEXT.loginFirst);
@@ -924,17 +868,34 @@
   function translateComment(commentEl) { var text = $('.pv-comment-text', commentEl); var box = $('.pv-comment-translated', commentEl); if (!text || !box) return; translateElementText(text.textContent || '', box); }
   function translateCommentInput() { var input = $('.pv-comment-input', state.root); var text = norm(input.value); if (!text) return; translateText(text).then(function (out) { if (out) { input.value = out; updateCommentActionButton(); } }).catch(function () { alertError(TEXT.translateFail); }); }
 
-  function showComposeFabInitial() { var fab = $('.pv-compose-fab', state.root); if (!fab) return; fab.classList.remove('is-hidden'); }
-  function hideComposerFab() { var fab = $('.pv-compose-fab', state.root); if (!fab) return; fab.classList.add('is-hidden'); }
+  function openViewer(images, index) {
+    if (!images || !images.length) return;
+    state.viewer.images = images.slice(0, CONFIG.imageMax);
+    state.viewer.index = Math.max(0, Math.min(state.viewer.images.length - 1, Number(index || 0)));
+    var viewer = $('.pv-viewer', state.root);
+    viewer.classList.add('is-open'); updateViewer();
+  }
+  function updateViewer() {
+    var viewer = $('.pv-viewer', state.root);
+    var wrapper = $('.pv-viewer .swiper-wrapper', state.root);
+    wrapper.innerHTML = state.viewer.images.map(function (src, i) { return '<div class="swiper-slide"><img src="' + escapeHtml(src) + '" alt="image ' + (i + 1) + '"></div>'; }).join('');
+    if (state.viewer.swiper) { try { state.viewer.swiper.destroy(true, true); } catch (e) {} state.viewer.swiper = null; }
+    if (window.Swiper) {
+      state.viewer.swiper = new window.Swiper($('.pv-viewer-swiper', viewer), {
+        direction: 'horizontal', slidesPerView: 1, speed: 220, initialSlide: state.viewer.index,
+        pagination: { el: $('.pv-viewer-pagination', viewer), clickable: false },
+        on: { slideChange: function (sw) { state.viewer.index = sw.activeIndex || 0; } }
+      });
+    }
+  }
+  function closeViewer() { $('.pv-viewer', state.root).classList.remove('is-open'); }
+
+  function showComposeFabInitial() { var fab = $('.pv-compose-fab', state.root); if (fab) fab.classList.remove('is-hidden'); }
+  function hideComposerFab() { var fab = $('.pv-compose-fab', state.root); if (fab) fab.classList.add('is-hidden'); }
   function openCompose() { pauseSlide(state.index); $('.pv-drawer-backdrop', state.root).classList.add('is-open'); $('.pv-compose-panel', state.root).classList.add('is-open'); hideComposerFab(); }
   function closeCompose() { $('.pv-compose-panel', state.root).classList.remove('is-open'); $('.pv-drawer-backdrop', state.root).classList.remove('is-open'); }
   function resetCompose() { var p = $('.pv-compose-panel', state.root); $('textarea', p).value = ''; setPendingImages([]); $('.pv-meta', p).textContent = ''; }
-
-  function canCanvasEncode(type) {
-    return new Promise(function (resolve) {
-      try { var c = document.createElement('canvas'); c.width = c.height = 1; c.toBlob(function (b) { resolve(!!b && b.type === type); }, type, 0.8); } catch (e) { resolve(false); }
-    });
-  }
+  function canCanvasEncode(type) { return new Promise(function (resolve) { try { var c = document.createElement('canvas'); c.width = c.height = 1; c.toBlob(function (b) { resolve(!!b && b.type === type); }, type, 0.8); } catch (e) { resolve(false); } }); }
   function compressImageFile(file) {
     if (!file || !/^image\//i.test(file.type) || /gif|svg/i.test(file.type) || file.size < 128 * 1024) return Promise.resolve(file);
     return new Promise(function (resolve) {
@@ -965,7 +926,6 @@
     state.compose.imageFiles = list; state.compose.imageUrls = list.map(function (f) { return URL.createObjectURL(f); });
     $('.pv-preview-images', state.root).innerHTML = state.compose.imageUrls.map(function (u) { return '<img src="' + u + '" alt="preview">'; }).join('');
   }
-  function setPendingVoice(blob, duration) { if (state.compose.voiceUrl) URL.revokeObjectURL(state.compose.voiceUrl); state.compose.voiceBlob = blob || null; state.compose.voiceDuration = Math.max(0, Math.round(Number(duration) || 0)); state.compose.voiceUrl = blob ? URL.createObjectURL(blob) : ''; var meta = $('.pv-compose-panel .pv-meta', state.root); if (blob) meta.textContent = TEXT.voiceMsg + ' ' + formatDuration(state.compose.voiceDuration); }
   function uploadToNodeBB(file) {
     var form = new FormData(); form.append('files[]', file); form.append('cid', String(CONFIG.cid));
     return fetch(rel('/api/post/upload'), { method: 'POST', credentials: 'same-origin', headers: { 'x-csrf-token': csrfToken(), 'x-requested-with': 'XMLHttpRequest' }, body: form })
@@ -973,11 +933,17 @@
   }
   function extractUploadUrl(payload) {
     var q = [payload], seen = new Set();
-    while (q.length) { var cur = q.shift(); if (!cur || seen.has(cur)) continue; if (typeof cur === 'string' && (/^(https?:)?\//i.test(cur) || /^\/assets\//i.test(cur))) return cur; if (typeof cur !== 'object') continue; seen.add(cur); if (Array.isArray(cur)) q.push.apply(q, cur); else Object.keys(cur).forEach(function (k) { q.push(cur[k]); }); }
+    while (q.length) {
+      var cur = q.shift();
+      if (!cur || seen.has(cur)) continue;
+      if (typeof cur === 'string' && (/^(https?:)?\//i.test(cur) || /^\/assets\//i.test(cur))) return cur;
+      if (typeof cur !== 'object') continue;
+      seen.add(cur);
+      if (Array.isArray(cur)) q.push.apply(q, cur); else Object.keys(cur).forEach(function (k) { q.push(cur[k]); });
+    }
     throw new Error('upload url missing');
   }
   function buildTitle(text) { var clean = norm(String(text || '').replace(RE.tiktokGlobal, '').replace(RE.tiktokShort, '').replace(/!\[[^\]]*\]\([^)]+\)/g, '').replace(/\[[^\]]*\]\([^)]+\)/g, '')); return clean ? clean.slice(0, 80) : '动态'; }
-  function appendDurationParam(url, seconds) { try { var u = new URL(url, location.origin); u.searchParams.set('haa8dur', String(Math.max(1, seconds || 1))); return u.origin === location.origin ? u.pathname + u.search + u.hash : u.toString(); } catch (e) { return url + (String(url).indexOf('?') === -1 ? '?' : '&') + 'haa8dur=' + encodeURIComponent(seconds || 1); } }
   function sendTopic() {
     if (!isLoggedIn()) return alertError(TEXT.loginFirst);
     var panel = $('.pv-compose-panel', state.root); var textarea = $('textarea', panel); var text = norm(textarea.value);
@@ -985,27 +951,40 @@
     var btn = $('.pv-compose-submit', panel); var meta = $('.pv-meta', panel); btn.disabled = true; btn.textContent = TEXT.publishing;
     var lines = []; if (text) lines.push(text);
     Promise.resolve().then(function () {
-      var p = Promise.resolve(); state.compose.imageFiles.forEach(function (file, i) { p = p.then(function () { meta.textContent = TEXT.uploadImage + ' ' + (i + 1) + '/' + state.compose.imageFiles.length; return uploadToNodeBB(file).then(function (url) { lines.push('![image](' + url + ')'); }); }); }); return p;
+      var p = Promise.resolve();
+      state.compose.imageFiles.forEach(function (file, i) {
+        p = p.then(function () { meta.textContent = TEXT.uploadImage + ' ' + (i + 1) + '/' + state.compose.imageFiles.length; return uploadToNodeBB(file).then(function (url) { lines.push('![image](' + url + ')'); }); });
+      });
+      return p;
     }).then(function () {
       return apiFetch('/api/v3/topics', { method: 'POST', headers: { 'content-type': 'application/json; charset=utf-8', 'x-csrf-token': csrfToken() }, body: JSON.stringify({ cid: Number(CONFIG.cid), title: buildTitle(text), content: lines.join('\n\n'), tags: [] }) });
     }).then(function () { alertSuccess(TEXT.publishOk); resetCompose(); closeCompose(); loadFeed(true); })
       .catch(function (err) { console.warn(err); alertError(err.message || TEXT.publishFail); })
       .finally(function () { btn.disabled = false; btn.textContent = TEXT.send; meta.textContent = ''; });
   }
-  function recorderMime() { if (!window.MediaRecorder) return ''; return ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/ogg'].find(function (t) { return MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t); }) || ''; }
-  function toggleRecording() {
-    var btn = $('.pv-record-btn', state.root);
-    if (state.compose.mediaRecorder && state.compose.mediaRecorder.state === 'recording') { stopRecording(false); return; }
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) return alertError('当前浏览器不支持录音');
-    navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
-      state.compose.stream = stream; state.compose.chunks = []; state.compose.startAt = Date.now();
-      var mime = recorderMime(); var rec = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 16000 } : { audioBitsPerSecond: 16000 }); state.compose.mediaRecorder = rec;
-      rec.ondataavailable = function (e) { if (e.data && e.data.size) state.compose.chunks.push(e.data); };
-      rec.onstop = function () { var dur = Math.max(1, Math.round((Date.now() - state.compose.startAt) / 1000)); if (state.compose.stream) state.compose.stream.getTracks().forEach(function (t) { t.stop(); }); clearInterval(state.compose.timer); btn.textContent = TEXT.record; if (state.compose.chunks.length) setPendingVoice(new Blob(state.compose.chunks, { type: state.compose.chunks[0].type || mime || 'audio/webm' }), dur); };
-      rec.start(250); btn.textContent = TEXT.stop; state.compose.timer = setInterval(function () { $('.pv-compose-panel .pv-meta', state.root).textContent = TEXT.voiceMsg + ' ' + formatDuration(Math.floor((Date.now() - state.compose.startAt) / 1000)); }, 250);
-    }).catch(function () { alertError('麦克风权限未开启'); });
+
+  function handleTap(e, index) {
+    var item = state.list[index];
+    if (!item) return;
+    var now = Date.now(); var last = state.lastTap;
+    var dist = Math.hypot(e.clientX - last.x, e.clientY - last.y);
+    if (last.time && now - last.time < CONFIG.doubleTapMs && dist < 44) {
+      clearTimeout(last.timer); last.time = 0; toggleLike(item, findSlide(index), true, { x: e.clientX, y: e.clientY }); return;
+    }
+    last.time = now; last.x = e.clientX; last.y = e.clientY;
+    clearTimeout(last.timer);
+    last.timer = setTimeout(function () {
+      if (!(item.tiktoks && item.tiktoks[0])) return;
+      var player = Array.from(state.players.values()).find(function (p) { return p.index === index; });
+      if (player && player.status === 'playing') pauseSlide(index);
+      else { state.hasInteracted = true; playSlide(index, true); }
+    }, CONFIG.doubleTapMs + 20);
   }
-  function stopRecording(silent) { var rec = state.compose.mediaRecorder; if (rec && rec.state === 'recording') { try { rec.stop(); } catch (e) {} } if (state.compose.stream) state.compose.stream.getTracks().forEach(function (t) { t.stop(); }); clearInterval(state.compose.timer); if (!silent) $('.pv-record-btn', state.root).textContent = TEXT.record; }
+  function unlockSoundFromGesture() {
+    if (state.hasInteracted && state.soundUnlocked) return;
+    state.hasInteracted = true; state.soundUnlocked = true; safeJsonSet('pv-sound-unlocked', true);
+    playSlide(state.index, true);
+  }
 
   function buildChrome() {
     state.root.innerHTML = '' +
@@ -1020,7 +999,6 @@
       '</div>';
     bindChrome();
   }
-
   function bindLongPress(el, cb) {
     if (!el) return;
     var timer = 0, sx = 0, sy = 0;
@@ -1028,15 +1006,6 @@
     el.addEventListener('pointermove', function (e) { if (Math.hypot(e.clientX - sx, e.clientY - sy) > 12) { clearTimeout(timer); timer = 0; } });
     ['pointerup','pointercancel','pointerleave'].forEach(function (n) { el.addEventListener(n, function () { clearTimeout(timer); timer = 0; }); });
   }
-
-  function unlockSoundFromGesture() {
-    if (state.hasInteracted && state.soundUnlocked) return;
-    state.hasInteracted = true;
-    state.soundUnlocked = true;
-    safeJsonSet('pv-sound-unlocked', true);
-    playSlide(state.index, true);
-  }
-
   function bindChrome() {
     state.root.addEventListener('click', onRootClick, true);
     state.root.addEventListener('pointerdown', onRootPointerDown, true);
@@ -1059,8 +1028,27 @@
     $('.pv-comment-input', state.root).addEventListener('keydown', function (e) { if (e.key === 'Enter') submitComment(); });
     $('.pv-translate-close', state.root).addEventListener('click', closeTranslateSettings);
     $('.pv-modal-backdrop', state.root).addEventListener('click', closeTranslateSettings);
-    $('.pv-translate-save', state.root).addEventListener('click', function () { var p = $('.pv-translate-panel', state.root); safeJsonSet('pv-translate-settings', { provider: $('[name="provider"]', p).value, sourceLang: $('[name="sourceLang"]', p).value, targetLang: $('[name="targetLang"]', p).value, aiEndpoint: $('[name="aiEndpoint"]', p).value, aiModel: $('[name="aiModel"]', p).value, aiApiKey: $('[name="aiApiKey"]', p).value, aiPrompt: $('[name="aiPrompt"]', p).value }); closeTranslateSettings(); });
-    $$('.pv-provider-tab', state.root).forEach(function(tab){ tab.addEventListener('click', function(){ var p = $('.pv-translate-panel', state.root); $('[name="provider"]', p).value = tab.dataset.provider || 'google'; $$('.pv-provider-tab', p).forEach(function(t){ t.classList.toggle('is-active', t === tab); }); p.classList.toggle('is-ai', tab.dataset.provider === 'ai'); }); });
+    $('.pv-translate-save', state.root).addEventListener('click', function () {
+      var p = $('.pv-translate-panel', state.root);
+      safeJsonSet('pv-translate-settings', {
+        provider: $('[name="provider"]', p).value,
+        sourceLang: $('[name="sourceLang"]', p).value,
+        targetLang: $('[name="targetLang"]', p).value,
+        aiEndpoint: $('[name="aiEndpoint"]', p).value,
+        aiModel: $('[name="aiModel"]', p).value,
+        aiApiKey: $('[name="aiApiKey"]', p).value,
+        aiPrompt: $('[name="aiPrompt"]', p).value
+      });
+      closeTranslateSettings();
+    });
+    $$('.pv-provider-tab', state.root).forEach(function (tab) {
+      tab.addEventListener('click', function () {
+        var p = $('.pv-translate-panel', state.root);
+        $('[name="provider"]', p).value = tab.dataset.provider || 'google';
+        $$('.pv-provider-tab', p).forEach(function (t) { t.classList.toggle('is-active', t === tab); });
+        p.classList.toggle('is-ai', tab.dataset.provider === 'ai');
+      });
+    });
     var viewer = $('.pv-viewer', state.root);
     $('.pv-viewer-close', viewer).addEventListener('click', closeViewer);
     viewer.addEventListener('pointerdown', function (e) { state.viewer.down = true; state.viewer.startX = e.clientX; state.viewer.startY = e.clientY; });
@@ -1080,17 +1068,15 @@
     if ((btn = e.target.closest('.pv-text-row'))) { if (!e.target.closest('.pv-translate-btn')) btn.classList.toggle('is-expanded'); }
   }
   function onRootPointerDown(e) {
-    if (!e.target.closest('input, textarea, select, .pv-comments-panel, .pv-compose-panel, .pv-translate-panel, .pv-viewer')) {
-      unlockSoundFromGesture();
-    }
+    if (!e.target.closest('input, textarea, select, .pv-comments-panel, .pv-compose-panel, .pv-translate-panel, .pv-viewer')) unlockSoundFromGesture();
     var textRow = e.target.closest('.pv-text-row');
     var translateBtn = e.target.closest('.pv-translate-btn, .pv-comment-translate');
     if (textRow || translateBtn) { clearTimeout(state.translateLongPressTimer); state.translateLongPressTimer = setTimeout(function () { openTranslateSettings(); }, 650); }
-    var tap = e.target.closest('.pv-tap-zone');
-    if (tap) { state.hasInteracted = true; }
+    var tap = e.target.closest('.pv-tap-zone'); if (tap) state.hasInteracted = true;
     var panel = $('.pv-comments-panel', state.root);
     if (panel && panel.classList.contains('is-open') && e.target.closest('.pv-comments-panel') && !e.target.closest('input,button,.pv-voice-card')) {
-      var rect = panel.getBoundingClientRect(); var list = e.target.closest('.pv-comments-list');
+      var canDrag = e.target.closest('.pv-panel-grip, .pv-comments-drag');
+      if (!canDrag) return;
       state.comments.dragCandidate = true; state.comments.dragStartTopZone = true; state.comments.dragStartY = e.clientY; state.comments.dragY = 0;
     }
   }
@@ -1122,7 +1108,6 @@
   function onRootPointerCancel() { clearTimeout(state.translateLongPressTimer); state.comments.dragging = false; state.comments.dragCandidate = false; var p = $('.pv-comments-panel', state.root); if (p) p.style.transform = ''; }
 
   function showEmpty(text) { var old = $('.pv-empty-page', state.root); if (old) old.remove(); var div = document.createElement('div'); div.className = 'pv-empty-page'; div.textContent = text || TEXT.empty; state.root.appendChild(div); }
-
   function init() {
     state.root = document.getElementById('peipe-video-app'); if (!state.root) return;
     document.body.classList.add('pv-video-mode'); addPreconnects(); buildChrome(); showComposeFabInitial();
