@@ -1,7 +1,8 @@
-/* Peipe /video mobile discover page v7 optimized
-   Frontend-only optimization: no backend cover changes required.
-   Main playback optimization: keep current + next few TikTok iframe players warm,
-   avoid resetting iframe.src when switching, and prune only far-away players.
+/* Peipe /video mobile discover page v7 optimized final
+   - Supports backend cached TikTok coverUrl from feed: item.coverUrl or item.tiktoks[0].coverUrl
+   - Keeps frontend TikTok oEmbed + gradient fallback, so black screen is avoided when cover is missing
+   - Current + next TikTok iframes are warmed; previous iframes are hard-stopped to prevent audio leak
+   - Comment drawer auto-fits content height; single-layer input; light translate panel; glass compose panel
 */
 (function () {
   'use strict';
@@ -31,6 +32,7 @@
     publishFail: '发布失败',
     placeholder: '写点什么，或粘贴 TikTok 链接',
     chooseImage: '图片',
+    translateInput: '翻译输入',
     send: '发布',
     imageOnly: '请选择图片',
     uploadImage: '上传图片',
@@ -179,16 +181,18 @@
 
   function isAutoText(text) {
     var clean = norm(String(text || '').replace(/[•・·|｜_／/\\-]+/g, ' '));
-    return !clean || /^(?:新动态|图片分享|图片动态|语音消息|语音动态|voice message|audio message|image|photo|picture)(?:\s*:??\s*\d{1,2}:\d{2}(?::\d{2})?)?$/i.test(clean);
+    return !clean || /^(?:动态|新动态|图片分享|图片动态|语音消息|语音动态|voice message|audio message|image|photo|picture)(?:\s*:??\s*\d{1,2}:\d{2}(?::\d{2})?)?$/i.test(clean);
   }
   function cleanDisplayText(text) {
-    var lines = String(text || '')
+    var raw = String(text || '')
+      .replace(RE.tiktokShort, '')
       .replace(RE.tiktokGlobal, '')
       .replace(RE.tiktokToken, '')
-      .replace(RE.tiktokShort, '')
+      .replace(/https?:\/\/(?:vt|vm)\.tiktok\.com\/?[^\s<>'"]*/ig, '')
+      .replace(/https?:\/\/vt\.?/ig, '')
       .replace(/!\[[^\]]*\]\([^)]+\)/g, '')
-      .replace(/\[\s*(?:语音消息|语音动态|voice\s*message|audio\s*message)[^\]]*\]\([^)]+\)/ig, '')
-      .split(/[\r\n]+/)
+      .replace(/\[\s*(?:语音消息|语音动态|voice\s*message|audio\s*message)[^\]]*\]\([^)]+\)/ig, '');
+    var lines = raw.split(/[\r\n]+/)
       .map(function (line) { return norm(line); })
       .filter(function (line) { return line && !isAutoText(line); });
     return lines.join('\n');
@@ -260,6 +264,7 @@
           item.counts = item.counts || { likes: 0, comments: 0 };
           item.text = displayText(item);
           item.title = cleanDisplayText(item.title || '');
+          item.coverUrl = getCachedCoverUrl(item) || '';
           return item;
         }).filter(function (item) { return (item.tiktoks && item.tiktoks.length) || (item.images && item.images.length); });
         state.list = refresh ? items : state.list.concat(items);
@@ -342,6 +347,30 @@
     warmVideoWindow(state.index);
   }
 
+  function getCachedCoverUrl(item) {
+    item = item || {};
+    var tk = item.tiktoks && item.tiktoks[0] || {};
+    return item.coverUrl || item.coverURL || item.cover || item.thumbnailUrl || item.thumbnail_url || item.thumbnail ||
+      tk.coverUrl || tk.coverURL || tk.cover || tk.thumbnailUrl || tk.thumbnail_url || tk.thumbnail || tk.cover_url || '';
+  }
+  function applyCoverToSlide(slide, url) {
+    var cover = $('.pv-cover', slide);
+    var img = $('.pv-cover img', slide);
+    if (!cover || !img || !url) return false;
+    img.onload = function () { cover.classList.remove('is-hidden'); cover.classList.add('has-cover'); };
+    img.onerror = function () { cover.classList.remove('has-cover'); try { img.removeAttribute('src'); } catch (e) {} };
+    if (img.getAttribute('src') !== url) img.src = url;
+    return true;
+  }
+  function renderVideoCoverFallback(item, images) {
+    var fallback = getCachedCoverUrl(item);
+    if (!fallback && images && images.length) fallback = images[0];
+    var hasFallback = !!fallback;
+    return '<div class="pv-cover pv-cover-fallback-wrap' + (hasFallback ? ' has-cover' : '') + '">' +
+      '<img ' + (hasFallback ? 'src="' + escapeHtml(fallback) + '" ' : '') + 'alt="" loading="eager" decoding="async">' +
+      '<div class="pv-cover-fallback"><div class="pv-cover-glow"></div><div class="pv-cover-play">▶</div><div class="pv-cover-text">正在加载</div></div>' +
+    '</div>';
+  }
   function renderSlideHtml(item, index) {
     item = item || {};
     var text = displayText(item);
@@ -357,7 +386,7 @@
     return '' +
       '<section class="pv-slide-item ' + (hasVideo ? 'is-video' : 'is-image') + '" data-index="' + index + '" data-tid="' + escapeHtml(item.tid || '') + '">' +
         '<div class="pv-media">' + mediaHtml + '</div>' +
-        (hasVideo ? '<div class="pv-cover is-hidden"><img alt=""></div>' : '') +
+        (hasVideo ? renderVideoCoverFallback(item, images) : '') +
         '<div class="pv-gradient"></div>' +
         (hasVideo ? '<div class="pv-tap-zone" data-index="' + index + '"></div>' : '') +
         '<div class="pv-toolbar">' +
@@ -479,24 +508,14 @@
     shell.appendChild(iframe);
     player = { key: key, index: index, item: item, videoId: tk.videoId, iframe: iframe, ready: false, wantPlay: false, status: 'paused' };
     state.players.set(key, player);
-    fetchCover(tk.videoId, tk.url).then(function (url) {
-      var cover = $('.pv-cover', slide);
-      var img = $('.pv-cover img', slide);
-      if (!cover || !img || !url) {
-        if (cover) cover.classList.add('is-hidden');
-        return;
-      }
-      img.onload = function () {
-        cover.classList.remove('is-hidden');
-        cover.classList.add('has-cover');
-      };
-      img.onerror = function () {
-        cover.classList.add('is-hidden');
-        cover.classList.remove('has-cover');
-        try { img.removeAttribute('src'); } catch (e) {}
-      };
-      if (!img.src) img.src = url;
-    });
+    var cachedCover = getCachedCoverUrl(item);
+    if (cachedCover) {
+      applyCoverToSlide(slide, cachedCover);
+    } else {
+      fetchCover(tk.videoId, tk.url).then(function (url) {
+        if (url) applyCoverToSlide(slide, url);
+      });
+    }
     return player;
   }
   function prepareSlide(index, autoplay) {
@@ -810,23 +829,50 @@
     var picture = user.picture || user.uploadedpicture || user.avatar || fallback.picture || fallback.uploadedpicture || '';
     return { uid: uid, username: username, userslug: userslug, picture: picture };
   }
+  function fitCommentsPanelHeight() {
+    var panel = $('.pv-comments-panel', state.root);
+    if (!panel || !panel.classList.contains('is-open')) return;
+    window.requestAnimationFrame(function () {
+      var head = $('.pv-panel-head', panel);
+      var grip = $('.pv-panel-grip', panel);
+      var list = $('.pv-comments-list', panel);
+      var reply = $('.pv-reply-bar', panel);
+      var voice = $('.pv-comment-voice-preview', panel);
+      var rec = $('.pv-comment-record-panel', panel);
+      var send = $('.pv-comment-send-row', panel);
+      var extra = 30;
+      var content = extra +
+        (grip ? grip.offsetHeight : 0) +
+        (head ? head.offsetHeight : 0) +
+        (reply && reply.classList.contains('is-open') ? reply.offsetHeight : 0) +
+        (voice && voice.classList.contains('is-open') ? voice.offsetHeight : 0) +
+        (rec && rec.classList.contains('is-open') ? rec.offsetHeight : 0) +
+        (send ? send.offsetHeight : 0) +
+        Math.min(list ? list.scrollHeight : 0, Math.round(window.innerHeight * 0.56));
+      var minH = Math.min(Math.round(window.innerHeight * 0.48), 360);
+      var maxH = Math.min(Math.round(window.innerHeight * 0.88), 760);
+      var h = Math.max(minH, Math.min(maxH, content));
+      panel.style.height = h + 'px';
+      if (list) list.style.maxHeight = Math.max(96, h - ((grip ? grip.offsetHeight : 0) + (head ? head.offsetHeight : 0) + (reply && reply.classList.contains('is-open') ? reply.offsetHeight : 0) + (voice && voice.classList.contains('is-open') ? voice.offsetHeight : 0) + (rec && rec.classList.contains('is-open') ? rec.offsetHeight : 0) + (send ? send.offsetHeight : 0) + 42)) + 'px';
+    });
+  }
   function openComments(item) {
     state.comments.item = item; state.comments.replyTo = null;
     var panel = $('.pv-comments-panel', state.root);
     $('.pv-drawer-backdrop', state.root).classList.add('is-open'); panel.classList.add('is-open'); panel.style.transform = '';
     $('.pv-comments-title', panel).textContent = TEXT.comments + ' ' + formatCount(item.counts.comments);
     $('.pv-comments-list', panel).innerHTML = '<div class="pv-meta">加载中...</div>';
-    $('.pv-comment-input', panel).placeholder = TEXT.commentPlaceholder; updateCommentActionButton();
+    $('.pv-comment-input', panel).placeholder = TEXT.commentPlaceholder; updateCommentActionButton(); fitCommentsPanelHeight();
     $('.pv-reply-bar', panel).classList.remove('is-open');
     apiFetch('/api/topic/' + encodeURIComponent(item.tid)).then(function (json) {
       state.comments.posts = Array.isArray(json.posts) ? json.posts.slice(1) : [];
       renderComments(state.comments.posts);
-    }).catch(function () { $('.pv-comments-list', panel).innerHTML = '<div class="pv-meta">加载失败，<a href="' + item.href + '">' + TEXT.openTopic + '</a></div>'; });
+    }).catch(function () { $('.pv-comments-list', panel).innerHTML = '<div class="pv-meta">加载失败，<a href="' + item.href + '">' + TEXT.openTopic + '</a></div>'; fitCommentsPanelHeight(); });
   }
-  function closeComments() { stopCommentRecording(true); setCommentVoice(null, 0); $('.pv-comments-panel', state.root).classList.remove('is-open'); $('.pv-drawer-backdrop', state.root).classList.remove('is-open'); }
+  function closeComments() { stopCommentRecording(true); setCommentVoice(null, 0); var p = $('.pv-comments-panel', state.root); if (p) { p.classList.remove('is-open'); p.style.height = ''; } $('.pv-drawer-backdrop', state.root).classList.remove('is-open'); }
   function renderComments(posts) {
     var list = $('.pv-comments-list', state.root);
-    if (!posts.length) { list.innerHTML = '<div class="pv-meta pv-empty-comments">' + TEXT.noComments + '</div>'; return; }
+    if (!posts.length) { list.innerHTML = '<div class="pv-meta pv-empty-comments">' + TEXT.noComments + '</div>'; fitCommentsPanelHeight(); return; }
     list.innerHTML = posts.map(function (post) {
       var user = normalizeAuthor(post.user || post, {}); var content = post.content || post.raw || '';
       var div = document.createElement('div'); div.innerHTML = content;
@@ -835,6 +881,7 @@
       return '<div class="pv-comment" data-pid="' + escapeHtml(post.pid || '') + '" data-username="' + escapeHtml(user.username || '用户') + '">' + avatar + '<div class="pv-comment-body"><div class="pv-comment-name">' + escapeHtml(user.username || '用户') + '</div>' +
         (text ? '<div class="pv-comment-text">' + escapeHtml(text) + '</div>' : '') + audios.map(function (a) { return renderVoiceCard(a, ''); }).join('') + '<div class="pv-comment-translated"></div><div class="pv-comment-actions"><button type="button" class="pv-comment-reply">' + TEXT.replyTo + '</button><button type="button" class="pv-comment-translate" aria-label="' + TEXT.translate + '" title="' + TEXT.translate + '">' + iconTranslate() + '</button></div></div></div>';
     }).join('');
+    fitCommentsPanelHeight();
   }
   function setReplyTarget(commentEl) {
     var username = commentEl.dataset.username || '用户'; var pid = commentEl.dataset.pid || '';
@@ -843,8 +890,9 @@
     $('.pv-reply-bar', panel).classList.add('is-open'); $('.pv-reply-name', panel).textContent = '@' + username;
     $('.pv-comment-input', panel).placeholder = TEXT.replyTo + ' @' + username;
     $('.pv-comment-input', panel).focus();
+    fitCommentsPanelHeight();
   }
-  function clearReplyTarget() { state.comments.replyTo = null; var panel = $('.pv-comments-panel', state.root); $('.pv-reply-bar', panel).classList.remove('is-open'); $('.pv-comment-input', panel).placeholder = TEXT.commentPlaceholder; updateCommentActionButton(); }
+  function clearReplyTarget() { state.comments.replyTo = null; var panel = $('.pv-comments-panel', state.root); $('.pv-reply-bar', panel).classList.remove('is-open'); $('.pv-comment-input', panel).placeholder = TEXT.commentPlaceholder; updateCommentActionButton(); fitCommentsPanelHeight(); }
   function setCommentVoice(blob, duration) {
     if (state.comments.voiceUrl) { try { URL.revokeObjectURL(state.comments.voiceUrl); } catch (e) {} }
     state.comments.voiceBlob = blob || null;
@@ -853,7 +901,7 @@
     var wrap = $('.pv-comment-voice-preview', state.root);
     if (!wrap) return;
     wrap.innerHTML = blob ? renderVoiceCard({ url: state.comments.voiceUrl }, 'is-preview') + '<button type="button" class="pv-comment-voice-remove">×</button>' : '';
-    wrap.classList.toggle('is-open', !!blob); updateCommentActionButton();
+    wrap.classList.toggle('is-open', !!blob); updateCommentActionButton(); fitCommentsPanelHeight();
   }
   function recorderMime() { if (!window.MediaRecorder) return ''; return ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/ogg'].find(function (t) { return MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t); }) || ''; }
   function toggleCommentRecording() {
@@ -893,6 +941,7 @@
   function updateCountUi(item) { var slide = findSlide(state.list.indexOf(item)); if (!slide) return; var btn = $('.pv-comment-btn span:last-child', slide); if (btn) btn.textContent = formatCount(item.counts.comments); }
   function translateComment(commentEl) { var text = $('.pv-comment-text', commentEl); var box = $('.pv-comment-translated', commentEl); if (!text || !box) return; translateElementText(text.textContent || '', box); }
   function translateCommentInput() { var input = $('.pv-comment-input', state.root); var text = norm(input.value); if (!text) return; translateText(text).then(function (out) { if (out) { input.value = out; updateCommentActionButton(); } }).catch(function () { alertError(TEXT.translateFail); }); }
+  function translateComposeInput() { var panel = $('.pv-compose-panel', state.root); var input = panel && $('textarea', panel); var text = norm(input && input.value); if (!text || !input) return; var btn = $('.pv-compose-translate', panel); if (btn) btn.disabled = true; translateText(text).then(function (out) { if (out) input.value = out; }).catch(function () { alertError(TEXT.translateFail); }).finally(function () { if (btn) btn.disabled = false; }); }
 
   function openViewer(images, index) {
     if (!images || !images.length) return;
@@ -969,7 +1018,7 @@
     }
     throw new Error('upload url missing');
   }
-  function buildTitle(text) { var clean = norm(String(text || '').replace(RE.tiktokGlobal, '').replace(RE.tiktokShort, '').replace(/!\[[^\]]*\]\([^)]+\)/g, '').replace(/\[[^\]]*\]\([^)]+\)/g, '')); return clean ? clean.slice(0, 80) : '动态'; }
+  function buildTitle(text) { var clean = norm(String(text || '').replace(RE.tiktokShort, '').replace(RE.tiktokGlobal, '').replace(RE.tiktokToken, '').replace(/https?:\/\/vt\.?/ig, '').replace(/!\[[^\]]*\]\([^)]+\)/g, '').replace(/\[[^\]]*\]\([^)]+\)/g, '')); return clean ? clean.slice(0, 80) : '动态'; }
   function sendTopic() {
     if (!isLoggedIn()) return alertError(TEXT.loginFirst);
     var panel = $('.pv-compose-panel', state.root); var textarea = $('textarea', panel); var text = norm(textarea.value);
@@ -1018,8 +1067,8 @@
         '<div class="pv-swiper swiper"><div class="swiper-wrapper"></div></div>' +
         '<button type="button" class="pv-compose-fab">+</button>' +
         '<div class="pv-drawer-backdrop"></div><div class="pv-modal-backdrop"></div>' +
-        '<section class="pv-compose-panel" role="dialog"><div class="pv-panel-head"><div class="pv-panel-title">' + TEXT.publish + '</div><button type="button" class="pv-close pv-compose-close">×</button></div><textarea placeholder="' + TEXT.placeholder + '"></textarea><div class="pv-preview-images"></div><div class="pv-compose-tools"><input type="file" class="pv-image-input" accept="image/*" multiple hidden><button type="button" class="pv-tool pv-image-btn">' + TEXT.chooseImage + '</button><button type="button" class="pv-primary pv-compose-submit">' + TEXT.send + '</button></div><div class="pv-meta"></div></section>' +
-        '<section class="pv-comments-panel" role="dialog"><div class="pv-panel-grip"></div><div class="pv-panel-head pv-comments-drag"><div class="pv-panel-title pv-comments-title">' + TEXT.comments + '</div><button type="button" class="pv-close pv-comments-close">×</button></div><div class="pv-comments-list"></div><div class="pv-reply-bar"><span>' + TEXT.replyTo + ' </span><b class="pv-reply-name"></b><button type="button" class="pv-reply-cancel">×</button></div><div class="pv-comment-voice-preview"></div><div class="pv-comment-record-panel"><div class="pv-record-pulse"></div><div class="pv-record-bars"><i></i><i></i><i></i><i></i><i></i></div><span class="pv-record-time">00:00</span><span class="pv-record-tip">正在录音，点右侧按钮停止</span></div><div class="pv-comment-send-row"><div class="pv-comment-input-wrap"><button type="button" class="pv-comment-input-translate" aria-label="' + TEXT.translate + '" title="' + TEXT.translate + '">' + iconTranslate() + '</button><input class="pv-comment-input" placeholder="' + TEXT.commentPlaceholder + '"><button type="button" class="pv-comment-action-btn" aria-label="语音或发送">' + iconMic() + '</button></div></div></section>' +
+        '<section class="pv-compose-panel" role="dialog"><div class="pv-panel-head"><div class="pv-panel-title">' + TEXT.publish + '</div><button type="button" class="pv-close pv-compose-close">×</button></div><textarea class="pv-compose-textarea" placeholder="' + TEXT.placeholder + '"></textarea><div class="pv-preview-images"></div><div class="pv-compose-tools"><input type="file" class="pv-image-input" accept="image/*" multiple hidden><button type="button" class="pv-tool pv-image-btn">' + TEXT.chooseImage + '</button><button type="button" class="pv-tool pv-compose-translate">' + iconTranslate() + ' ' + TEXT.translate + '</button><button type="button" class="pv-primary pv-compose-submit">' + TEXT.send + '</button></div><div class="pv-meta"></div></section>' +
+        '<section class="pv-comments-panel" role="dialog"><div class="pv-panel-grip"></div><div class="pv-panel-head pv-comments-drag"><div class="pv-panel-title pv-comments-title">' + TEXT.comments + '</div><button type="button" class="pv-close pv-comments-close">×</button></div><div class="pv-comments-list"></div><div class="pv-reply-bar"><span>' + TEXT.replyTo + ' </span><b class="pv-reply-name"></b><button type="button" class="pv-reply-cancel">×</button></div><div class="pv-comment-voice-preview"></div><div class="pv-comment-record-panel"><div class="pv-record-pulse"></div><div class="pv-record-bars"><i></i><i></i><i></i><i></i><i></i></div><span class="pv-record-time">00:00</span><span class="pv-record-tip">正在录音，点右侧按钮停止</span></div><div class="pv-comment-send-row"><button type="button" class="pv-comment-input-translate" aria-label="' + TEXT.translate + '" title="' + TEXT.translate + '">' + iconTranslate() + '</button><input class="pv-comment-input" placeholder="' + TEXT.commentPlaceholder + '"><button type="button" class="pv-comment-action-btn" aria-label="语音或发送">' + iconMic() + '</button></div></section>' +
         '<section class="pv-translate-panel" role="dialog"><div class="pv-panel-head"><div class="pv-panel-title">' + TEXT.translateSettings + '</div><button type="button" class="pv-close pv-translate-close">×</button></div><div class="pv-provider-tabs"><button type="button" class="pv-provider-tab" data-provider="google">' + TEXT.google + '</button><button type="button" class="pv-provider-tab" data-provider="ai">' + TEXT.ai + '</button><input type="hidden" name="provider" value="google"></div><div class="pv-lang-row"><label><span>' + TEXT.sourceLang + '</span><select name="sourceLang">' + langOptions(true) + '</select></label><span class="pv-lang-arrow">⇄</span><label><span>' + TEXT.targetLang + '</span><select name="targetLang">' + langOptions(false) + '</select></label></div><div class="pv-ai-settings"><label>' + TEXT.aiEndpoint + '<input name="aiEndpoint" placeholder="https://api.example.com/v1"></label><label>' + TEXT.aiModel + '<input name="aiModel" placeholder="gpt-4.1-mini / qwen / deepseek"></label><label>' + TEXT.aiApiKey + '<input name="aiApiKey" type="password" placeholder="API Key"></label><label>' + TEXT.aiPrompt + '<textarea name="aiPrompt" rows="4"></textarea></label></div><div class="pv-translate-actions"><button type="button" class="pv-primary pv-translate-save">' + TEXT.save + '</button></div></section>' +
         '<div class="pv-viewer"><div class="pv-viewer-swiper swiper"><div class="swiper-wrapper"></div><div class="pv-viewer-pagination"></div></div><button class="pv-viewer-close" aria-label="关闭">×</button></div>' +
       '</div>';
@@ -1040,10 +1089,11 @@
     state.root.addEventListener('pointercancel', onRootPointerCancel, true);
     $('.pv-compose-fab', state.root).addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); openCompose(); });
     $('.pv-compose-close', state.root).addEventListener('click', closeCompose);
-    $('.pv-drawer-backdrop', state.root).addEventListener('click', function () { closeCompose(); closeComments(); });
+    $('.pv-drawer-backdrop', state.root).addEventListener('click', function () { closeCompose(); closeComments(); closeTranslateSettings(); });
     $('.pv-image-btn', state.root).addEventListener('click', function () { $('.pv-image-input', state.root).click(); });
     $('.pv-image-input', state.root).addEventListener('change', function (e) { var files = Array.from(e.target.files || []).slice(0, CONFIG.imageMax); e.target.value = ''; if (files.find(function (f) { return !/^image\//i.test(f.type); })) return alertError(TEXT.imageOnly); compressImageFiles(files).then(setPendingImages); });
     $('.pv-compose-submit', state.root).addEventListener('click', sendTopic);
+    $('.pv-compose-translate', state.root).addEventListener('click', translateComposeInput);
     $('.pv-comments-close', state.root).addEventListener('click', closeComments);
     $('.pv-reply-cancel', state.root).addEventListener('click', clearReplyTarget);
     $('.pv-comment-action-btn', state.root).addEventListener('click', handleCommentAction);
@@ -1138,7 +1188,20 @@
     if (document.getElementById('pv-video-runtime-fix-style')) return;
     var style = document.createElement('style');
     style.id = 'pv-video-runtime-fix-style';
-    style.textContent = '#peipe-video-app .pv-cover.is-hidden{display:none!important;}#peipe-video-app .pv-cover img:not([src]){display:none!important;}#peipe-video-app .pv-cover img[src=""]{display:none!important;}';
+    style.textContent = '' +
+      '#peipe-video-app .pv-slide-item.is-video .pv-video-shell,#peipe-video-app .pv-slide-item.is-video .pv-tiktok-frame{position:absolute!important;inset:0!important;z-index:0!important;}' +
+      '#peipe-video-app .pv-slide-item.is-video .pv-cover{position:absolute!important;inset:0!important;z-index:1!important;display:flex!important;align-items:center!important;justify-content:center!important;overflow:hidden!important;background:radial-gradient(circle at 28% 18%,rgba(255,45,85,.48),transparent 34%),radial-gradient(circle at 72% 72%,rgba(0,180,255,.34),transparent 38%),linear-gradient(135deg,#191725,#06070b)!important;pointer-events:none!important;transition:opacity .18s ease!important;}' +
+      '#peipe-video-app .pv-slide-item.is-video .pv-cover.is-hidden{opacity:0!important;visibility:hidden!important;}' +
+      '#peipe-video-app .pv-slide-item.is-video .pv-cover img{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;object-fit:cover!important;display:none!important;}' +
+      '#peipe-video-app .pv-slide-item.is-video .pv-cover.has-cover img{display:block!important;}' +
+      '#peipe-video-app .pv-slide-item.is-video .pv-cover.has-cover .pv-cover-fallback{background:linear-gradient(180deg,rgba(0,0,0,.08),rgba(0,0,0,.26))!important;}' +
+      '#peipe-video-app .pv-slide-item.is-video .pv-cover:not(.has-cover) img{display:none!important;}' +
+      '#peipe-video-app .pv-cover-fallback{position:absolute!important;inset:0!important;display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;color:#fff!important;text-shadow:0 2px 10px rgba(0,0,0,.45)!important;}' +
+      '#peipe-video-app .pv-cover-glow{position:absolute!important;width:46vw!important;height:46vw!important;max-width:220px!important;max-height:220px!important;border-radius:999px!important;background:rgba(255,255,255,.12)!important;filter:blur(20px)!important;}' +
+      '#peipe-video-app .pv-cover-play{position:relative!important;width:64px!important;height:64px!important;border-radius:999px!important;background:rgba(255,255,255,.18)!important;backdrop-filter:blur(8px)!important;display:flex!important;align-items:center!important;justify-content:center!important;font-size:28px!important;line-height:1!important;padding-left:4px!important;box-shadow:0 10px 34px rgba(0,0,0,.28)!important;}' +
+      '#peipe-video-app .pv-cover-text{position:relative!important;margin-top:12px!important;font-size:13px!important;opacity:.86!important;letter-spacing:.08em!important;}' +
+      '#peipe-video-app .pv-slide-item.is-video .pv-gradient{z-index:2!important;}' +
+      '#peipe-video-app .pv-slide-item.is-video .pv-tap-zone,#peipe-video-app .pv-slide-item.is-video .pv-toolbar,#peipe-video-app .pv-slide-item.is-video .pv-desc{z-index:3!important;}';
     document.head.appendChild(style);
   }
 
