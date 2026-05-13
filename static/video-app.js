@@ -96,6 +96,7 @@
     imageSwipers: new Map(),
     hasInteracted: false,
     soundUnlocked: !!safeJsonGet('pv-sound-unlocked', false),
+    soundMuted: !!safeJsonGet('pv-sound-muted', !safeJsonGet('pv-sound-unlocked', false)),
     lastTap: { time: 0, x: 0, y: 0, timer: 0 },
     pointer: { down: false, x: 0, y: 0, moved: false, tapIndex: -1 },
     manualPausedKey: '',
@@ -322,7 +323,10 @@
         slideChangeTransitionStart: function (swiper) {
           state.hasInteracted = true;
           state.soundUnlocked = true;
+          state.soundMuted = false;
           safeJsonSet('pv-sound-unlocked', true);
+          safeJsonSet('pv-sound-muted', false);
+          updateSoundUi();
           hideComposerFab();
           var targetIndex = typeof swiper.activeIndex === 'number' ? swiper.activeIndex : state.index;
           var previousIndex = typeof swiper.previousIndex === 'number' ? swiper.previousIndex : state.index;
@@ -407,6 +411,7 @@
           (author.uid && !isOwnAuthor(author) ? '<button type="button" class="pv-follow-plus ' + (following ? 'is-following' : '') + '" data-index="' + index + '">' + (following ? '✓' : '+') + '</button>' : '') + '</div>' +
           '<button type="button" class="pv-action pv-like ' + (liked ? 'is-active' : '') + '" data-index="' + index + '"><span class="pv-action-icon">' + iconHeart(liked) + '</span><span>' + formatCount(item.counts.likes) + '</span></button>' +
           '<button type="button" class="pv-action pv-comment-btn" data-index="' + index + '"><span class="pv-action-icon">' + iconComment() + '</span><span>' + formatCount(item.counts.comments) + '</span></button>' +
+          (hasVideo ? '<button type="button" class="pv-action pv-sound-btn ' + (!state.soundMuted && state.soundUnlocked ? 'is-active' : '') + '" data-index="' + index + '" aria-label="声音"><span class="pv-action-icon">' + iconSound(!state.soundMuted && state.soundUnlocked) + '</span><span class="pv-sound-label">声音</span></button>' : '') +
           (images.length && hasVideo ? '<button type="button" class="pv-action pv-album-btn" data-index="' + index + '"><span class="pv-action-icon">' + iconPhoto() + '</span><span>' + images.length + '</span></button>' : '') +
         '</div>' +
         '<div class="pv-desc">' +
@@ -422,6 +427,7 @@
   function iconMic() { return '<svg class="pv-mic-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3z"></path><path d="M5 11a7 7 0 0 0 14 0M12 18v3m-4 0h8"></path></svg>'; }
   function iconSend() { return '<svg class="pv-send-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h14M13 6l6 6-6 6"></path></svg>'; }
   function iconPhoto() { return '<svg viewBox="0 0 48 48" aria-hidden="true"><path d="M10 10h28a4 4 0 0 1 4 4v20a4 4 0 0 1-4 4H10a4 4 0 0 1-4-4V14a4 4 0 0 1 4-4zm5 23h18l-6-8-4 5-3-4-5 7zm2-13a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"></path></svg>'; }
+  function iconSound(on) { return on ? '<svg class="pv-sound-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4z"></path><path d="M16 8.5a4 4 0 0 1 0 7M18.5 6a7.5 7.5 0 0 1 0 12"></path></svg>' : '<svg class="pv-sound-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4z"></path><path d="M17 9l4 4m0-4l-4 4"></path></svg>'; }
 
   function getImageIndex(item) {
     var key = String(item && (item.tid || item.pid || state.list.indexOf(item)) || '');
@@ -482,10 +488,10 @@
       muted: opts.muted ? '1' : '0',
       loop: '1',
       rel: '0',
-      controls: '1',
-      progress_bar: '1',
+      controls: opts.controls ? '1' : '0',
+      progress_bar: opts.controls ? '1' : '0',
       play_button: '0',
-      volume_control: '1',
+      volume_control: '0',
       fullscreen_button: '0',
       timestamp: '0',
       music_info: '0',
@@ -533,7 +539,7 @@
     // Do not later change iframe.src just to switch autoplay; that discards the preload.
     iframe.src = buildPlayerUrl(tk.videoId, {
       autoplay: true,
-      muted: !isCurrent || !(state.soundUnlocked || autoplay)
+      muted: !isCurrent || !state.soundUnlocked || state.soundMuted
     });
     iframe.allow = 'autoplay; fullscreen; encrypted-media; picture-in-picture';
     iframe.loading = 'eager';
@@ -573,9 +579,46 @@
   }
   function tryPlayPlayer(player, unmute) {
     if (!player || !player.iframe || player.iframe.src === 'about:blank') return;
-    if (unmute) sendToPlayer(player.iframe, 'unMute');
+    if (unmute && state.soundUnlocked && !state.soundMuted) sendToPlayer(player.iframe, 'unMute');
     else sendToPlayer(player.iframe, 'mute');
     sendToPlayer(player.iframe, 'play');
+  }
+  function currentPlayer() {
+    var item = state.list[state.index];
+    return item && item.tiktoks && item.tiktoks[0] ? state.players.get(playerKey(state.index, item.tiktoks[0].videoId)) : null;
+  }
+  function soundIsOn() { return !!(state.soundUnlocked && !state.soundMuted); }
+  function updateSoundUi() {
+    if (!state.root) return;
+    var on = soundIsOn();
+    $$('.pv-sound-btn', state.root).forEach(function (btn) {
+      btn.classList.toggle('is-active', on);
+      var icon = $('.pv-action-icon', btn);
+      if (icon) icon.innerHTML = iconSound(on);
+    });
+  }
+  function setSoundMuted(muted) {
+    state.hasInteracted = true;
+    state.soundUnlocked = true;
+    state.soundMuted = !!muted;
+    safeJsonSet('pv-sound-unlocked', true);
+    safeJsonSet('pv-sound-muted', state.soundMuted);
+    var player = currentPlayer();
+    if (player && player.iframe) {
+      if (state.soundMuted) {
+        sendToPlayer(player.iframe, 'mute');
+      } else {
+        player.wantPlay = true;
+        tryPlayPlayer(player, true);
+      }
+    }
+    updateSoundUi();
+  }
+  function toggleSound(index) {
+    if (typeof index === 'number' && index !== state.index && state.swiper) {
+      try { state.swiper.slideTo(index, 180); } catch (e) {}
+    }
+    setSoundMuted(!state.soundMuted);
   }
   function schedulePrewarm(player) {
     if (!player || !player.iframe || isCurrentPlayer(player)) return;
@@ -761,6 +804,7 @@
     if (cover) cover.classList.add('is-hidden');
     slide.classList.add('is-playing');
     slide.classList.remove('is-loading');
+    updateSoundUi();
   }
   window.addEventListener('message', function (event) {
     var data = event.data;
@@ -1233,6 +1277,9 @@
     var player = Array.from(state.players.values()).find(function (p) { return p.index === index; });
     if (state.justUnlockedSoundAt && Date.now() - state.justUnlockedSoundAt < 450) {
       state.manualPausedKey = '';
+      state.soundMuted = false;
+      safeJsonSet('pv-sound-muted', false);
+      updateSoundUi();
       if (player) {
         player.wantPlay = true;
         tryPlayPlayer(player, true);
@@ -1246,8 +1293,11 @@
     } else {
       state.hasInteracted = true;
       state.soundUnlocked = true;
+      state.soundMuted = false;
       state.manualPausedKey = '';
       safeJsonSet('pv-sound-unlocked', true);
+      safeJsonSet('pv-sound-muted', false);
+      updateSoundUi();
       playSlide(index, true);
     }
   }
@@ -1255,11 +1305,13 @@
     var wasUnlocked = !!state.soundUnlocked;
     state.hasInteracted = true;
     state.soundUnlocked = true;
+    state.soundMuted = false;
     safeJsonSet('pv-sound-unlocked', true);
+    safeJsonSet('pv-sound-muted', false);
+    updateSoundUi();
     if (!wasUnlocked) {
       state.justUnlockedSoundAt = Date.now();
-      var item = state.list[state.index];
-      var player = item && item.tiktoks && item.tiktoks[0] ? state.players.get(playerKey(state.index, item.tiktoks[0].videoId)) : null;
+      var player = currentPlayer();
       if (player) {
         state.manualPausedKey = '';
         player.wantPlay = true;
@@ -1340,6 +1392,7 @@
   }
   function onRootClick(e) {
     var btn;
+    if ((btn = e.target.closest('.pv-sound-btn'))) { e.preventDefault(); e.stopPropagation(); toggleSound(Number(btn.dataset.index)); return; }
     if ((btn = e.target.closest('.pv-like'))) { e.preventDefault(); e.stopPropagation(); var i = Number(btn.dataset.index); toggleLike(state.list[i], findSlide(i), true); return; }
     if ((btn = e.target.closest('.pv-comment-btn'))) { e.preventDefault(); e.stopPropagation(); openComments(state.list[Number(btn.dataset.index)]); return; }
     if ((btn = e.target.closest('.pv-follow-plus'))) { e.preventDefault(); e.stopPropagation(); var idx = Number(btn.dataset.index); toggleFollow(state.list[idx], findSlide(idx)); return; }
@@ -1357,7 +1410,7 @@
     state.pointer.y = e.clientY;
     state.pointer.moved = false;
     state.pointer.tapIndex = tap ? Number(tap.dataset.index) : -1;
-    if (!e.target.closest('input, textarea, select, .pv-comments-panel, .pv-compose-panel, .pv-translate-panel, .pv-viewer')) unlockSoundFromGesture();
+    if (!e.target.closest('input, textarea, select, .pv-sound-btn, .pv-comments-panel, .pv-compose-panel, .pv-translate-panel, .pv-viewer')) unlockSoundFromGesture();
     var textRow = e.target.closest('.pv-text-row');
     var translateBtn = e.target.closest('.pv-translate-btn, .pv-comment-translate');
     if (textRow || translateBtn) { clearTimeout(state.translateLongPressTimer); state.translateLongPressTimer = setTimeout(function () { openTranslateSettings(); }, 650); }
@@ -1418,7 +1471,11 @@
       '#peipe-video-app .pv-slide-item.is-video .pv-gradient{z-index:2!important;}' +
       '#peipe-video-app .pv-slide-item.is-video .pv-tap-zone,#peipe-video-app .pv-slide-item.is-video .pv-toolbar,#peipe-video-app .pv-slide-item.is-video .pv-desc{z-index:3!important;}' +
       '#peipe-video-app .pv-cover-play{display:none!important;}' +
-      '#peipe-video-app .pv-slide-item.is-video .pv-tap-zone{bottom:max(88px,calc(var(--pv-bottom-safe) + 82px))!important;touch-action:pan-y!important;}';
+      '#peipe-video-app .pv-slide-item.is-video .pv-tap-zone{right:0!important;bottom:0!important;touch-action:pan-y!important;}' +
+      '#peipe-video-app .pv-tiktok-frame{pointer-events:none!important;}' +
+      '#peipe-video-app .pv-mic-svg,#peipe-video-app .pv-send-svg,#peipe-video-app .pv-sound-svg{width:20px!important;height:20px!important;fill:none!important;stroke:currentColor!important;stroke-width:2.2px!important;stroke-linecap:round!important;stroke-linejoin:round!important;}' +
+      '#peipe-video-app .pv-mic-svg path,#peipe-video-app .pv-send-svg path,#peipe-video-app .pv-sound-svg path{fill:none!important;stroke:currentColor!important;}' +
+      '#peipe-video-app .pv-follow-plus{top:-8px!important;bottom:auto!important;z-index:4!important;}';
     document.head.appendChild(style);
   }
 
