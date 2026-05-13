@@ -1,7 +1,7 @@
-/* Peipe /video mobile discover page v13
-   - 官方 TikTok 控件：底部左侧播放/声音区域只开放 1 秒，之后重新拦截
+/* Peipe /video mobile discover page v14
+   - 官方 TikTok 控件：底部播放区始终透传，声音区由安全代理点击开启，避免跳下载页
    - 用户名/屏幕点击不跳转，仅头像跳转
-   - 当前视频静音自动播放；声音由官方音量按钮控制，避免重试播放反复静音
+   - 当前视频静音自动播放；声音按钮位置调用官方 unMute，避免重试播放反复静音
    - 当前 + 下一个视频 iframe 预载，封面预载 6 个
    - 评论区根据内容自适应高度，输入框无背景
    - 点赞接口 PUT/DELETE /api/v3/posts/{pid}/vote
@@ -10,8 +10,8 @@
 (function () {
   'use strict';
 
-  if (window.__peipeVideoDiscoverV13) return;
-  window.__peipeVideoDiscoverV13 = true;
+  if (window.__peipeVideoDiscoverV14) return;
+  window.__peipeVideoDiscoverV14 = true;
 
   var CONFIG = Object.assign({
     cid: 6,
@@ -26,9 +26,11 @@
     coverCacheMs: 7 * 24 * 60 * 60 * 1000,
     translateCacheMs: 3 * 24 * 60 * 60 * 1000,
     doubleTapMs: 280,
-    // 底部 TikTok 官方控件区域：左下角播放/声音按钮短暂透传，其它区域持续拦截
-    officialBottomReserve: 72,
-    officialControlLeftWidth: 176,
+    // 底部 TikTok 官方控件区域：播放区始终透传；声音区用安全代理避免 TikTok 下载跳转
+    officialBottomReserve: 64,
+    officialPlayPassWidth: 64,
+    officialSoundLeft: 64,
+    officialSoundWidth: 88,
     officialControlsExposeMs: 1000,
     swiperCdnJs: '/plugins/nodebb-plugin-peipe-video/static/lib/swiper-bundle.min.js',
     swiperCdnCss: '/plugins/nodebb-plugin-peipe-video/static/lib/swiper-bundle.min.css'
@@ -107,6 +109,7 @@
     imageSwipers: new Map(),
     coverPreloadSet: new Set(),
     officialControlTimer: 0,
+    soundUnlocked: new Set(),
     comments: {
       item: null, posts: [], loading: false, replyTo: null,
       dragY: 0, dragStartY: 0, dragging: false, dragCandidate: false, dragStartTopZone: false,
@@ -199,6 +202,36 @@
   function canonicalTikTokUrl(url) {
     var m = String(url || '').replace(/&amp;/g, '&').match(RE.tiktokOne);
     return m ? 'https://www.tiktok.com/@' + m[1] + '/video/' + m[2] : String(url || '');
+  }
+
+  function firstUrlLike() {
+    for (var i = 0; i < arguments.length; i += 1) {
+      var v = arguments[i];
+      if (!v) continue;
+      if (Array.isArray(v)) {
+        for (var j = 0; j < v.length; j += 1) {
+          var nested = firstUrlLike(v[j]);
+          if (nested) return nested;
+        }
+        continue;
+      }
+      if (typeof v === 'object') {
+        var nestedObj = firstUrlLike(v.url, v.src, v.href, v.thumbnail_url, v.thumbnailUrl, v.cover, v.coverUrl);
+        if (nestedObj) return nestedObj;
+        continue;
+      }
+      v = String(v || '').trim();
+      if (/^(https?:)?\/\//i.test(v) || /^\/assets\//i.test(v) || /^\/uploads\//i.test(v)) return v;
+    }
+    return '';
+  }
+  function knownCoverUrl(item, tk) {
+    item = item || {}; tk = tk || {};
+    return firstUrlLike(
+      tk.coverUrl, tk.cover_url, tk.cover, tk.thumbnailUrl, tk.thumbnail_url, tk.thumbnail, tk.poster, tk.image,
+      item.coverUrl, item.cover_url, item.cover, item.thumbnailUrl, item.thumbnail_url, item.thumbnail, item.teaser, item.poster,
+      item.images && item.images[0]
+    );
   }
 
   function addPreconnects() {
@@ -375,13 +408,13 @@
     return '' +
       '<section class="pv-slide-item ' + (hasVideo ? 'is-video' : 'is-image') + '" data-index="' + index + '" data-tid="' + escapeHtml(item.tid || '') + '">' +
         '<div class="pv-media">' + mediaHtml + '</div>' +
-        (hasVideo ? '<div class="pv-cover"><img alt="cover"></div>' : '') +
+        (hasVideo ? '<div class="pv-cover"><img alt="cover"' + (knownCoverUrl(item, item.tiktoks[0]) ? ' src="' + escapeHtml(knownCoverUrl(item, item.tiktoks[0])) + '"' : '') + '></div>' : '') +
 
-        // 拦截层（仅视频帖）：只在左下角官方播放/声音按钮区域短暂透传，其它位置拦截
+        // 拦截层（仅视频帖）：播放区始终透传；声音区安全代理；其它位置拦截
         (hasVideo ? '<div class="pv-iframe-shield" data-index="' + index + '">' +
           '<div class="pv-shield-main" data-index="' + index + '"></div>' +
+          '<button type="button" class="pv-official-sound-proxy" data-index="' + index + '" aria-label="开启声音" title="开启声音"></button>' +
           '<div class="pv-shield-bottom-right" data-index="' + index + '"></div>' +
-          '<div class="pv-shield-bottom-left" data-index="' + index + '"></div>' +
         '</div>' : '') +
 
         '<div class="pv-gradient"></div>' +
@@ -484,7 +517,7 @@
   function buildPlayerUrl(videoId, autoplay) {
     var params = new URLSearchParams({
       autoplay: autoplay ? '1' : '0',
-      muted: '1',
+      muted: '0',
       loop: '1',
       rel: '0',
       controls: '1',
@@ -513,6 +546,7 @@
       if (autoplay && !/[?&]autoplay=1(?:&|$)/.test(player.iframe.src)) {
         player.iframe.src = buildPlayerUrl(player.videoId, true);
         player.ready = false;
+        player.mutedForAutoplay = false;
       }
       player.iframe.fetchPriority = index === state.index ? 'high' : 'low';
       return player;
@@ -523,7 +557,9 @@
     var iframe = document.createElement('iframe');
     iframe.className = 'pv-tiktok-frame';
     iframe.src = buildPlayerUrl(tk.videoId, !!autoplay);
-    iframe.allow = 'autoplay; fullscreen; encrypted-media; picture-in-picture';
+    iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen';
+    iframe.setAttribute('allowfullscreen', '');
+    iframe.setAttribute('playsinline', '');
     iframe.loading = 'eager';
     iframe.fetchPriority = index === state.index ? 'high' : 'low';
     iframe.referrerPolicy = 'strict-origin-when-cross-origin';
@@ -531,10 +567,17 @@
     shell.appendChild(iframe);
     player = { key: key, index: index, item: item, videoId: tk.videoId, iframe: iframe, ready: false, wantPlay: false, muted: true, mutedForAutoplay: false, status: 'paused' };
     state.players.set(key, player);
+    var knownCover = knownCoverUrl(item, tk);
+    if (knownCover) {
+      warmImage(knownCover);
+      var knownImg = $('.pv-cover img', slide);
+      if (knownImg && !knownImg.src) knownImg.src = knownCover;
+    }
     fetchCover(tk.videoId, tk.url).then(function (url) {
       if (!url) return;
+      warmImage(url);
       var img = $('.pv-cover img', slide);
-      if (img && !img.src) img.src = url;
+      if (img && (!img.src || img.src === location.href)) img.src = url;
     });
     return player;
   }
@@ -557,8 +600,15 @@
   }
   function syncOfficialControlVars() {
     if (!state.root) return;
-    state.root.style.setProperty('--pv-official-bottom-reserve', Math.max(48, Number(CONFIG.officialBottomReserve || 72)) + 'px');
-    state.root.style.setProperty('--pv-official-left-pass', Math.max(120, Number(CONFIG.officialControlLeftWidth || 176)) + 'px');
+    var bottom = Math.max(48, Number(CONFIG.officialBottomReserve || 64));
+    var play = Math.max(44, Number(CONFIG.officialPlayPassWidth || 64));
+    var soundLeft = Math.max(play, Number(CONFIG.officialSoundLeft || play));
+    var soundWidth = Math.max(48, Number(CONFIG.officialSoundWidth || 88));
+    state.root.style.setProperty('--pv-official-bottom-reserve', bottom + 'px');
+    state.root.style.setProperty('--pv-official-play-pass', play + 'px');
+    state.root.style.setProperty('--pv-official-sound-left', soundLeft + 'px');
+    state.root.style.setProperty('--pv-official-sound-width', soundWidth + 'px');
+    state.root.style.setProperty('--pv-official-block-left', (soundLeft + soundWidth) + 'px');
   }
   function closeOfficialControlWindow(index) {
     var slide = findSlide(index);
@@ -585,6 +635,33 @@
     if (!player || !player.iframe || player.mutedForAutoplay) return;
     sendToPlayer(player.iframe, 'mute');
     player.mutedForAutoplay = true;
+  }
+
+  function findPlayerByIndex(index) {
+    var found = null;
+    state.players.forEach(function (p) { if (!found && p.index === index) found = p; });
+    return found;
+  }
+  function unlockPlayerSound(index) {
+    var player = findPlayerByIndex(index);
+    if (!player || !player.iframe) return;
+    state.soundUnlocked.add(player.key);
+    player.muted = false;
+    player.mutedForAutoplay = true;
+    // TikTok Player API builds have used different casing across versions; send safe variants.
+    sendToPlayer(player.iframe, 'unMute');
+    sendToPlayer(player.iframe, 'unmute');
+    sendToPlayer(player.iframe, 'mute', false);
+    sendToPlayer(player.iframe, 'setMuted', false);
+    sendToPlayer(player.iframe, 'play');
+    markSlidePlaying(index);
+  }
+  function handleSoundProxy(index) {
+    state.hasInteracted = true;
+    playSlide(index, true);
+    unlockPlayerSound(index);
+    setTimeout(function () { unlockPlayerSound(index); }, 80);
+    setTimeout(function () { unlockPlayerSound(index); }, 240);
   }
 
   function activateCurrent() {
@@ -641,7 +718,7 @@
     delays.forEach(function (delay) {
       setTimeout(function () {
         if (!player.wantPlay || player.index !== state.index) return;
-        muteForAutoplayOnce(player);
+        if (!state.soundUnlocked.has(player.key)) muteForAutoplayOnce(player);
         sendToPlayer(player.iframe, 'play');
       }, Math.max(0, Number(delay) || 0));
     });
@@ -683,6 +760,7 @@
     if (cover) cover.classList.add('is-hidden');
     slide.classList.add('is-playing');
     slide.classList.remove('is-loading');
+    openOfficialControlWindow(index);
   }
   window.addEventListener('message', function (event) {
     var data = event.data;
@@ -695,7 +773,7 @@
       if (!player.iframe || player.iframe.contentWindow !== event.source) return;
       if (data.type === 'onPlayerReady') {
         player.ready = true;
-        if (player.wantPlay) { muteForAutoplayOnce(player); sendToPlayer(player.iframe, 'play'); }
+        if (player.wantPlay) { if (!state.soundUnlocked.has(player.key)) muteForAutoplayOnce(player); sendToPlayer(player.iframe, 'play'); }
         return;
       }
       if (data.type === 'onStateChange') {
@@ -748,9 +826,12 @@
       if (it.tiktoks && it.tiktoks[0]) {
         var tk = it.tiktoks[0];
         var key = 'tk:' + tk.videoId;
-        if (state.coverPreloadSet.has(key)) continue;
-        state.coverPreloadSet.add(key);
-        fetchCover(tk.videoId, tk.url).then(warmImage);
+        if (!state.coverPreloadSet.has(key)) {
+          state.coverPreloadSet.add(key);
+          var known = knownCoverUrl(it, tk);
+          if (known) warmImage(known);
+          fetchCover(tk.videoId, tk.url).then(function (url) { if (url) warmImage(url); });
+        }
       }
       if (it.images && it.images.length) {
         it.images.slice(0, CONFIG.imageMax).forEach(function (src) {
@@ -769,7 +850,7 @@
   function isInOfficialBottomZone(e, slide) {
     if (!slide) return false;
     var rect = slide.getBoundingClientRect();
-    return (rect.bottom - e.clientY) <= Math.max(48, Number(CONFIG.officialBottomReserve || 72));
+    return (rect.bottom - e.clientY) <= Math.max(48, Number(CONFIG.officialBottomReserve || 64));
   }
 
   /* ======================
@@ -1773,16 +1854,22 @@
   function onRootClick(e) {
     var btn;
 
+    if ((btn = e.target.closest('.pv-official-sound-proxy'))) {
+      e.preventDefault(); e.stopPropagation();
+      handleSoundProxy(Number(btn.dataset.index));
+      return;
+    }
+
     // 头像（仅这里跳转个人主页）—— 不拦截 a 标签默认行为
     if (e.target.closest('.pv-avatar-link')) return;
 
-    // 拦截层：只有 is-official-window 期间的左下角会穿透到 iframe；其它点击全部留在本页
+    // 拦截层：底部播放区没有覆盖，声音区由代理处理；其它 iframe 点击全部留在本页
     if ((btn = e.target.closest('.pv-iframe-shield'))) {
       var shieldIndex = Number(btn.dataset.index || (e.target.dataset && e.target.dataset.index) || -1);
       var slide = findSlide(shieldIndex);
       e.preventDefault(); e.stopPropagation();
       if (isInOfficialBottomZone(e, slide)) {
-        // 1 秒透传窗口关闭后，底部区域点击被吃掉，避免跳转下载页。
+        // 底部非按钮区域点击被吃掉，避免跳转下载页。
         return;
       }
       handleTap(e, shieldIndex);
