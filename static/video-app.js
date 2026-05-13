@@ -1,7 +1,7 @@
-/* Peipe /video mobile discover page v14
+/* Peipe /video mobile discover page v15
    - 官方 TikTok 控件：底部播放区始终透传，声音区由安全代理点击开启，避免跳下载页
    - 用户名/屏幕点击不跳转，仅头像跳转
-   - 当前视频静音自动播放；声音按钮位置调用官方 unMute，避免重试播放反复静音
+   - muted=0 保留音量控制，但关闭 URL 自动播放；ready 后先 mute 再 play，避免黑屏和自动播放失败
    - 当前 + 下一个视频 iframe 预载，封面预载 6 个
    - 评论区根据内容自适应高度，输入框无背景
    - 点赞接口 PUT/DELETE /api/v3/posts/{pid}/vote
@@ -10,8 +10,8 @@
 (function () {
   'use strict';
 
-  if (window.__peipeVideoDiscoverV14) return;
-  window.__peipeVideoDiscoverV14 = true;
+  if (window.__peipeVideoDiscoverV15) return;
+  window.__peipeVideoDiscoverV15 = true;
 
   var CONFIG = Object.assign({
     cid: 6,
@@ -28,9 +28,9 @@
     doubleTapMs: 280,
     // 底部 TikTok 官方控件区域：播放区始终透传；声音区用安全代理避免 TikTok 下载跳转
     officialBottomReserve: 64,
-    officialPlayPassWidth: 64,
-    officialSoundLeft: 64,
-    officialSoundWidth: 88,
+    officialPlayPassWidth: 54,
+    officialSoundLeft: 54,
+    officialSoundWidth: 178,
     officialControlsExposeMs: 1000,
     swiperCdnJs: '/plugins/nodebb-plugin-peipe-video/static/lib/swiper-bundle.min.js',
     swiperCdnCss: '/plugins/nodebb-plugin-peipe-video/static/lib/swiper-bundle.min.css'
@@ -516,7 +516,9 @@
 
   function buildPlayerUrl(videoId, autoplay) {
     var params = new URLSearchParams({
-      autoplay: autoplay ? '1' : '0',
+      // URL 级 autoplay + muted=0 在移动端容易触发 AUTOPLAY_ERROR 黑屏；
+      // 始终关闭 URL autoplay，等待 onPlayerReady 后 postMessage: mute -> play。
+      autoplay: '0',
       muted: '0',
       loop: '1',
       rel: '0',
@@ -543,11 +545,6 @@
     var key = playerKey(index, tk.videoId);
     var player = state.players.get(key);
     if (player && player.iframe && player.iframe.parentNode) {
-      if (autoplay && !/[?&]autoplay=1(?:&|$)/.test(player.iframe.src)) {
-        player.iframe.src = buildPlayerUrl(player.videoId, true);
-        player.ready = false;
-        player.mutedForAutoplay = false;
-      }
       player.iframe.fetchPriority = index === state.index ? 'high' : 'low';
       return player;
     }
@@ -565,8 +562,12 @@
     iframe.referrerPolicy = 'strict-origin-when-cross-origin';
     iframe.title = 'TikTok Player';
     shell.appendChild(iframe);
-    player = { key: key, index: index, item: item, videoId: tk.videoId, iframe: iframe, ready: false, wantPlay: false, muted: true, mutedForAutoplay: false, status: 'paused' };
+    player = { key: key, index: index, item: item, videoId: tk.videoId, iframe: iframe, ready: false, loaded: false, wantPlay: false, muted: true, mutedForAutoplay: false, status: 'paused' };
     state.players.set(key, player);
+    iframe.addEventListener('load', function () {
+      player.loaded = true;
+      if (player.wantPlay && player.index === state.index) requestPlayerPlay(player);
+    });
     var knownCover = knownCoverUrl(item, tk);
     if (knownCover) {
       warmImage(knownCover);
@@ -632,9 +633,20 @@
     }
   }
   function muteForAutoplayOnce(player) {
-    if (!player || !player.iframe || player.mutedForAutoplay) return;
+    if (!player || !player.iframe || player.mutedForAutoplay || state.soundUnlocked.has(player.key)) return;
     sendToPlayer(player.iframe, 'mute');
+    player.muted = true;
     player.mutedForAutoplay = true;
+  }
+  function hasCoverImage(index) {
+    var slide = findSlide(index);
+    var img = slide && $('.pv-cover img', slide);
+    return !!(img && img.getAttribute('src'));
+  }
+  function requestPlayerPlay(player) {
+    if (!player || !player.iframe || !player.wantPlay || player.index !== state.index) return;
+    if (!state.soundUnlocked.has(player.key)) muteForAutoplayOnce(player);
+    sendToPlayer(player.iframe, 'play');
   }
 
   function findPlayerByIndex(index) {
@@ -648,20 +660,18 @@
     state.soundUnlocked.add(player.key);
     player.muted = false;
     player.mutedForAutoplay = true;
-    // TikTok Player API builds have used different casing across versions; send safe variants.
+    // TikTok 官方 Embed Player 支持 unMute；用用户点击触发，避免浏览器拦截有声播放。
     sendToPlayer(player.iframe, 'unMute');
-    sendToPlayer(player.iframe, 'unmute');
-    sendToPlayer(player.iframe, 'mute', false);
-    sendToPlayer(player.iframe, 'setMuted', false);
     sendToPlayer(player.iframe, 'play');
-    markSlidePlaying(index);
+    if (player.status === 'playing' || !hasCoverImage(index)) markSlidePlaying(index);
   }
   function handleSoundProxy(index) {
     state.hasInteracted = true;
-    playSlide(index, true);
+    var player = ensureTikTokPlayer(index, true);
+    if (player) player.wantPlay = true;
     unlockPlayerSound(index);
     setTimeout(function () { unlockPlayerSound(index); }, 80);
-    setTimeout(function () { unlockPlayerSound(index); }, 240);
+    setTimeout(function () { unlockPlayerSound(index); }, 260);
   }
 
   function activateCurrent() {
@@ -716,13 +726,13 @@
     var delays = CONFIG.playRetryDelays || [0, 80, 220, 520, 1000, 1600];
     openOfficialControlWindow(index);
     delays.forEach(function (delay) {
-      setTimeout(function () {
-        if (!player.wantPlay || player.index !== state.index) return;
-        if (!state.soundUnlocked.has(player.key)) muteForAutoplayOnce(player);
-        sendToPlayer(player.iframe, 'play');
-      }, Math.max(0, Number(delay) || 0));
+      setTimeout(function () { requestPlayerPlay(player); }, Math.max(0, Number(delay) || 0));
     });
-    setTimeout(function () { if (player.wantPlay && player.status !== 'playing') markSlidePlaying(index); }, 1800);
+    // 如果封面缺失，播放器 ready 后露出 iframe，避免用户只看到空黑封面；
+    // 有封面时等待 TikTok onStateChange=playing 再隐藏封面。
+    setTimeout(function () {
+      if (player.wantPlay && player.index === state.index && player.ready && player.status !== 'playing' && !hasCoverImage(index)) markSlidePlaying(index);
+    }, 1800);
   }
   function pauseSlide(index) {
     state.players.forEach(function (p) {
@@ -773,7 +783,7 @@
       if (!player.iframe || player.iframe.contentWindow !== event.source) return;
       if (data.type === 'onPlayerReady') {
         player.ready = true;
-        if (player.wantPlay) { if (!state.soundUnlocked.has(player.key)) muteForAutoplayOnce(player); sendToPlayer(player.iframe, 'play'); }
+        if (player.wantPlay) requestPlayerPlay(player);
         return;
       }
       if (data.type === 'onStateChange') {
@@ -790,6 +800,19 @@
           var s2 = findSlide(player.index);
           if (s2 && player.wantPlay) s2.classList.add('is-loading');
         }
+      }
+      if (data.type === 'onMute') {
+        player.muted = !!data.value;
+        if (data.value === false) state.soundUnlocked.add(player.key);
+      }
+      if (data.type === 'onVolumeChange' && Number(data.value) > 0) {
+        player.muted = false;
+        state.soundUnlocked.add(player.key);
+      }
+      if (data.type === 'onPlayerError') {
+        player.status = 'paused';
+        var errSlide = findSlide(player.index);
+        if (errSlide) errSlide.classList.remove('is-loading');
       }
     });
   });
