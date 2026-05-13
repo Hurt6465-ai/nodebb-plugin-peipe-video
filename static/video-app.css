@@ -3,8 +3,11 @@
   --pv-top-safe: env(safe-area-inset-top, 0px);
   --pv-accent: #ff2442;
   --pv-text-shadow: 0 1px 3px rgba(0, 0, 0, .64);
-  --pv-official-bottom-reserve: 72px;
-  --pv-official-left-pass: 176px;
+  --pv-official-bottom-reserve: 64px;
+  --pv-official-play-pass: 64px;
+  --pv-official-sound-left: 64px;
+  --pv-official-sound-width: 88px;
+  --pv-official-block-left: 152px;
 }
 
 html:has(.pv-page-active),
@@ -220,8 +223,9 @@ body.pv-video-mode [component="sidebar"] {
 }
 
 /* ===== 关键：TikTok iframe 拦截层 =====
-   默认拦截所有可能导致下载页跳转的 iframe 点击。
-   只有当前视频刚播放时的 1 秒内，左下角官方播放/声音按钮区域会透传给 TikTok。
+   - 底部左侧播放按钮区域始终不覆盖，让 TikTok 官方播放按钮可点。
+   - 声音按钮区域由透明安全代理接管：用户点的是底部官方位置，但不会触发 TikTok 下载跳转。
+   - 其它 iframe 区域持续拦截，避免点视频主体跳到下载页。
 */
 .pv-iframe-shield {
   position: absolute;
@@ -230,7 +234,8 @@ body.pv-video-mode [component="sidebar"] {
   background: transparent;
   pointer-events: none;
 }
-.pv-iframe-shield > div {
+.pv-iframe-shield > div,
+.pv-iframe-shield > button {
   position: absolute;
   background: transparent;
   pointer-events: auto;
@@ -243,20 +248,47 @@ body.pv-video-mode [component="sidebar"] {
   bottom: var(--pv-official-bottom-reserve);
 }
 .pv-shield-bottom-right {
-  left: var(--pv-official-left-pass);
+  left: var(--pv-official-block-left);
   right: 0;
   bottom: 0;
   height: var(--pv-official-bottom-reserve);
 }
-.pv-shield-bottom-left {
-  left: 0;
+.pv-official-sound-proxy {
+  left: var(--pv-official-sound-left);
   bottom: 0;
-  width: var(--pv-official-left-pass);
+  width: var(--pv-official-sound-width);
   height: var(--pv-official-bottom-reserve);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  opacity: 1;
+  z-index: 1;
 }
-.pv-slide-item.is-official-window .pv-shield-bottom-left {
-  display: none;
+.pv-official-sound-proxy::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  transform: translate(-50%, -50%) scale(.86);
+  border: 2px solid rgba(255,255,255,.88);
+  box-shadow: 0 0 0 6px rgba(255,255,255,.12), 0 2px 12px rgba(0,0,0,.32);
+  opacity: 0;
   pointer-events: none;
+}
+.pv-slide-item.is-official-window .pv-official-sound-proxy::after {
+  opacity: .92;
+  animation: pv-sound-proxy-pulse 1s ease-out both;
+}
+@keyframes pv-sound-proxy-pulse {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(.72); }
+  18% { opacity: .95; transform: translate(-50%, -50%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(1.2); }
+}
+.pv-slide-item.is-official-window .pv-cover:not(.is-hidden) {
+  clip-path: inset(0 0 var(--pv-official-bottom-reserve) 0);
 }
 
 /* 双击点赞 / 单击播放暂停热区 —— 视频帖 */
