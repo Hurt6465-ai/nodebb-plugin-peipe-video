@@ -1,4 +1,4 @@
-/* Peipe /video mobile discover page v7 optimized final - compressed images + follow/image UI fixes build
+/* Peipe /video mobile discover page v7 optimized final - compressed images + safer media-layer UI fixes build
    - Adds cost-effective image compression for compose images: 1080px / ~90KB target, WebP preferred
    - HEIC/HEIF are converted when the browser can decode them; if conversion fails, upload is rejected
    - GIF/SVG are rejected for compose image uploads to avoid large/unsafe originals
@@ -477,7 +477,7 @@
     var images = (item.images || []).slice(0, CONFIG.imageMax);
     var slideIndex = state.list.indexOf(item);
     var slides = images.map(function (src, i) {
-      return '<div class="swiper-slide pv-image-swiper-slide"><img src="' + escapeHtml(src) + '" alt="image ' + (i + 1) + '"></div>';
+      return '<div class="swiper-slide pv-image-swiper-slide"><img src="' + escapeHtml(src) + '" alt="image ' + (i + 1) + '" style="width:100%;height:100%;object-fit:cover;object-position:center center;display:block;"></div>';
     }).join('');
     return '<div class="pv-image-main" data-index="' + slideIndex + '">' +
       '<div class="pv-image-swiper swiper" data-index="' + slideIndex + '"><div class="swiper-wrapper">' + slides + '</div>' +
@@ -1766,12 +1766,16 @@
       '#peipe-video-app .pv-tiktok-frame{pointer-events:none!important;}' +
       '#peipe-video-app .pv-mic-svg,#peipe-video-app .pv-send-svg,#peipe-video-app .pv-sound-svg{width:20px!important;height:20px!important;fill:none!important;stroke:currentColor!important;stroke-width:2.2px!important;stroke-linecap:round!important;stroke-linejoin:round!important;}' +
       '#peipe-video-app .pv-mic-svg path,#peipe-video-app .pv-send-svg path,#peipe-video-app .pv-sound-svg path{fill:none!important;stroke:currentColor!important;}' +
-      '#peipe-video-app .pv-slide-item.is-image .pv-media,#peipe-video-app .pv-image-main,#peipe-video-app .pv-image-swiper,#peipe-video-app .pv-image-swiper .swiper-wrapper,#peipe-video-app .pv-image-swiper-slide{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;background:#050505!important;overflow:hidden!important;}' +
-      '#peipe-video-app .pv-slide-item.is-image .pv-image-swiper-slide img{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;object-fit:cover!important;object-position:center center!important;display:block!important;background:#050505!important;}' +
+      '#peipe-video-app .pv-slide-item{position:relative!important;overflow:hidden!important;isolation:isolate!important;}' +
+      '#peipe-video-app .pv-slide-item .pv-media{z-index:0!important;}' +
+      '#peipe-video-app .pv-slide-item .pv-gradient{z-index:2!important;pointer-events:none!important;}' +
+      '#peipe-video-app .pv-slide-item .pv-toolbar,#peipe-video-app .pv-slide-item .pv-desc{z-index:8!important;}' +
+      '#peipe-video-app .pv-slide-item.is-image .pv-image-main,#peipe-video-app .pv-slide-item.is-image .pv-image-swiper,#peipe-video-app .pv-slide-item.is-image .pv-image-swiper .swiper-wrapper,#peipe-video-app .pv-slide-item.is-image .pv-image-swiper-slide{width:100%!important;height:100%!important;background:#050505!important;overflow:hidden!important;}' +
+      '#peipe-video-app .pv-slide-item.is-image .pv-image-swiper-slide img{width:100%!important;height:100%!important;object-fit:cover!important;object-position:center center!important;display:block!important;background:#050505!important;}' +
       '#peipe-video-app .pv-viewer img{max-width:100%!important;max-height:100%!important;object-fit:contain!important;object-position:center center!important;}' +
-      '#peipe-video-app .pv-avatar-wrap{position:relative!important;}' +
-      '#peipe-video-app .pv-follow-plus{left:-7px!important;right:auto!important;bottom:-7px!important;top:auto!important;z-index:4!important;}' +
-      '#peipe-video-app .pv-center-play{position:absolute!important;left:50%!important;top:50%!important;transform:translate(-50%,-50%) scale(.96)!important;width:76px!important;height:76px!important;border:0!important;border-radius:999px!important;background:rgba(255,255,255,.18)!important;color:#fff!important;display:flex!important;align-items:center!important;justify-content:center!important;font-size:34px!important;line-height:1!important;padding:0 0 0 5px!important;opacity:0!important;visibility:hidden!important;pointer-events:none!important;z-index:4!important;backdrop-filter:blur(12px)!important;-webkit-backdrop-filter:blur(12px)!important;box-shadow:0 12px 42px rgba(0,0,0,.38)!important;transition:opacity .16s ease,transform .16s ease,visibility .16s ease!important;}' +
+      '#peipe-video-app .pv-avatar-wrap{position:relative!important;overflow:visible!important;z-index:9!important;}' +
+      '#peipe-video-app .pv-follow-plus{left:-7px!important;right:auto!important;bottom:-7px!important;top:auto!important;z-index:10!important;}' +
+      '#peipe-video-app .pv-center-play{position:absolute!important;left:50%!important;top:50%!important;transform:translate(-50%,-50%) scale(.96)!important;width:76px!important;height:76px!important;border:0!important;border-radius:999px!important;background:rgba(255,255,255,.18)!important;color:#fff!important;display:flex!important;align-items:center!important;justify-content:center!important;font-size:34px!important;line-height:1!important;padding:0 0 0 5px!important;opacity:0!important;visibility:hidden!important;pointer-events:none!important;z-index:7!important;backdrop-filter:blur(12px)!important;-webkit-backdrop-filter:blur(12px)!important;box-shadow:0 12px 42px rgba(0,0,0,.38)!important;transition:opacity .16s ease,transform .16s ease,visibility .16s ease!important;}' +
       '#peipe-video-app .pv-slide-item.is-video.is-paused .pv-center-play{opacity:1!important;visibility:visible!important;pointer-events:auto!important;transform:translate(-50%,-50%) scale(1)!important;}';
     document.head.appendChild(style);
   }
