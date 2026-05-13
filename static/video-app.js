@@ -13,10 +13,12 @@
   var CONFIG = Object.assign({
     cid: 6,
     pageSize: 12,
-    preloadAhead: 5,
-    preloadVideoAhead: 2,
-    keepWarmVideoAhead: 2,
-    keepWarmVideoBehind: 1,
+    preloadAhead: 4,
+    preloadVideoAhead: 1,
+    keepWarmVideoAhead: 1,
+    keepWarmVideoBehind: 0,
+    enableSegmentPrewarm: false,
+    segmentPrewarmMs: 220,
     coverCacheEndpoint: '/api/v3/plugins/peipe-video/cover',
     imageMax: 4,
     coverCacheMs: 7 * 24 * 60 * 60 * 1000,
@@ -28,8 +30,10 @@
 
   // Accept both names. video.tpl uses coverCacheApi; older JS used coverCacheEndpoint.
   if (CONFIG.coverCacheApi) CONFIG.coverCacheEndpoint = CONFIG.coverCacheApi;
-  CONFIG.keepWarmVideoAhead = Math.max(1, Number(CONFIG.keepWarmVideoAhead || CONFIG.preloadVideoAhead || 2));
-  CONFIG.keepWarmVideoBehind = Math.max(0, Number(CONFIG.keepWarmVideoBehind || 1));
+  CONFIG.keepWarmVideoAhead = Math.max(1, Number(CONFIG.keepWarmVideoAhead === undefined ? (CONFIG.preloadVideoAhead || 1) : CONFIG.keepWarmVideoAhead));
+  CONFIG.keepWarmVideoBehind = Math.max(0, Number(CONFIG.keepWarmVideoBehind === undefined ? 0 : CONFIG.keepWarmVideoBehind));
+  CONFIG.enableSegmentPrewarm = CONFIG.enableSegmentPrewarm === true || CONFIG.enableSegmentPrewarm === 'true';
+  CONFIG.segmentPrewarmMs = Math.max(120, Math.min(500, Number(CONFIG.segmentPrewarmMs || 220)));
 
   var TEXT = {
     loading: '发现加载中...',
@@ -407,7 +411,7 @@
         '<div class="pv-gradient"></div>' +
         (hasVideo ? '<div class="pv-tap-zone" data-index="' + index + '"></div>' : '') +
         '<div class="pv-toolbar">' +
-          '<div class="pv-avatar-wrap"><a href="' + authorHref(author) + '">' + avatarHtml + '</a>' +
+          '<div class="pv-avatar-wrap"><span class="pv-avatar-link">' + avatarHtml + '</span>' +
           (author.uid && !isOwnAuthor(author) ? '<button type="button" class="pv-follow-plus ' + (following ? 'is-following' : '') + '" data-index="' + index + '">' + (following ? '✓' : '+') + '</button>' : '') + '</div>' +
           '<button type="button" class="pv-action pv-like ' + (liked ? 'is-active' : '') + '" data-index="' + index + '"><span class="pv-action-icon">' + iconHeart(liked) + '</span><span>' + formatCount(item.counts.likes) + '</span></button>' +
           '<button type="button" class="pv-action pv-comment-btn" data-index="' + index + '"><span class="pv-action-icon">' + iconComment() + '</span><span>' + formatCount(item.counts.comments) + '</span></button>' +
@@ -415,7 +419,7 @@
           (images.length && hasVideo ? '<button type="button" class="pv-action pv-album-btn" data-index="' + index + '"><span class="pv-action-icon">' + iconPhoto() + '</span><span>' + images.length + '</span></button>' : '') +
         '</div>' +
         '<div class="pv-desc">' +
-          '<a class="pv-username" href="' + authorHref(author) + '">@' + escapeHtml(author.username || author.userslug || '用户') + '</a>' +
+          '<span class="pv-username">@' + escapeHtml(author.username || author.userslug || '用户') + '</span>' +
           (text ? '<div class="pv-text-row" data-index="' + index + '"><span class="pv-text-main">' + escapeHtml(text) + '</span> <button type="button" class="pv-translate-btn" data-index="' + index + '" aria-label="' + TEXT.translate + '" title="' + TEXT.translate + '">' + iconTranslate() + '</button></div><div class="pv-translated"></div>' : '') +
           '<div class="pv-time">' + relativeTime(item.createdAt) + '</div>' +
         '</div>' +
@@ -622,9 +626,24 @@
   }
   function schedulePrewarm(player) {
     if (!player || !player.iframe || isCurrentPlayer(player)) return;
-    player.prewarmWanted = true;
-    if (!player.ready) return;
-    if (player.prewarmStarted) return;
+
+    // TikTok iframes are heavy. Keep only the immediate next iframe warm by default.
+    // Segment prewarm is optional because muted hidden playback can make low-end phones stutter.
+    sendToPlayer(player.iframe, 'mute');
+
+    if (!CONFIG.enableSegmentPrewarm || player.index !== state.index + 1) {
+      if (player.ready && !player.wantPlay) {
+        setTimeout(function () {
+          if (!player || !player.iframe || isCurrentPlayer(player) || player.wantPlay) return;
+          sendToPlayer(player.iframe, 'mute');
+          sendToPlayer(player.iframe, 'pause');
+          player.status = 'paused';
+        }, 120);
+      }
+      return;
+    }
+
+    if (!player.ready || player.prewarmStarted) return;
     player.prewarmStarted = true;
     tryPlayPlayer(player, false);
     setTimeout(function () {
@@ -632,7 +651,7 @@
       sendToPlayer(player.iframe, 'mute');
       sendToPlayer(player.iframe, 'pause');
       player.status = 'paused';
-    }, 650);
+    }, CONFIG.segmentPrewarmMs);
   }
   function forcePlayerAutoplay(player) {
     // Kept for backward calls, but intentionally does not change iframe.src.
@@ -1327,7 +1346,7 @@
         '<button type="button" class="pv-compose-fab">+</button>' +
         '<div class="pv-drawer-backdrop"></div><div class="pv-modal-backdrop"></div>' +
         '<section class="pv-compose-panel" role="dialog"><div class="pv-panel-head"><div class="pv-panel-title">' + TEXT.publish + '</div><button type="button" class="pv-close pv-compose-close">×</button></div><textarea class="pv-compose-textarea" placeholder="' + TEXT.placeholder + '"></textarea><div class="pv-preview-images"></div><div class="pv-compose-tools"><input type="file" class="pv-image-input" accept="image/*" multiple hidden><button type="button" class="pv-tool pv-image-btn">' + TEXT.chooseImage + '</button><button type="button" class="pv-tool pv-compose-translate">' + iconTranslate() + ' ' + TEXT.translate + '</button><button type="button" class="pv-primary pv-compose-submit">' + TEXT.send + '</button></div><div class="pv-meta"></div></section>' +
-        '<section class="pv-comments-panel" role="dialog"><div class="pv-panel-grip"></div><div class="pv-panel-head pv-comments-drag"><div class="pv-panel-title pv-comments-title">' + TEXT.comments + '</div><button type="button" class="pv-close pv-comments-close">×</button></div><div class="pv-comments-list"></div><div class="pv-reply-bar"><span>' + TEXT.replyTo + ' </span><b class="pv-reply-name"></b><button type="button" class="pv-reply-cancel">×</button></div><div class="pv-comment-voice-preview"></div><div class="pv-comment-record-panel"><div class="pv-record-pulse"></div><div class="pv-record-bars"><i></i><i></i><i></i><i></i><i></i></div><span class="pv-record-time">00:00</span><span class="pv-record-tip">正在录音，点右侧按钮停止</span></div><div class="pv-comment-send-row"><button type="button" class="pv-comment-input-translate" aria-label="' + TEXT.translate + '" title="' + TEXT.translate + '">' + iconTranslate() + '</button><input class="pv-comment-input" placeholder="' + TEXT.commentPlaceholder + '"><button type="button" class="pv-comment-action-btn" aria-label="语音或发送">' + iconMic() + '</button></div></section>' +
+        '<section class="pv-comments-panel" role="dialog"><div class="pv-panel-grip"></div><div class="pv-panel-head pv-comments-drag"><div class="pv-panel-title pv-comments-title">' + TEXT.comments + '</div><button type="button" class="pv-close pv-comments-close">×</button></div><div class="pv-comments-list"></div><div class="pv-reply-bar"><span>' + TEXT.replyTo + ' </span><b class="pv-reply-name"></b><button type="button" class="pv-reply-cancel">×</button></div><div class="pv-comment-voice-preview"></div><div class="pv-comment-record-panel"><div class="pv-record-pulse"></div><div class="pv-record-bars"><i></i><i></i><i></i><i></i><i></i></div><span class="pv-record-time">00:00</span><span class="pv-record-tip">正在录音，点右侧按钮停止</span></div><div class="pv-comment-send-row"><div class="pv-comment-input-wrap"><button type="button" class="pv-comment-input-translate" aria-label="' + TEXT.translate + '" title="' + TEXT.translate + '">' + iconTranslate() + '</button><input class="pv-comment-input" placeholder="' + TEXT.commentPlaceholder + '"><button type="button" class="pv-comment-action-btn" aria-label="语音或发送">' + iconMic() + '</button></div></div></section>' +
         '<section class="pv-translate-panel" role="dialog"><div class="pv-panel-head"><div class="pv-panel-title">' + TEXT.translateSettings + '</div><button type="button" class="pv-close pv-translate-close">×</button></div><div class="pv-provider-tabs"><button type="button" class="pv-provider-tab" data-provider="google">' + TEXT.google + '</button><button type="button" class="pv-provider-tab" data-provider="ai">' + TEXT.ai + '</button><input type="hidden" name="provider" value="google"></div><div class="pv-lang-row"><label><span>' + TEXT.sourceLang + '</span><select name="sourceLang">' + langOptions(true) + '</select></label><span class="pv-lang-arrow">⇄</span><label><span>' + TEXT.targetLang + '</span><select name="targetLang">' + langOptions(false) + '</select></label></div><div class="pv-ai-settings"><label>' + TEXT.aiEndpoint + '<input name="aiEndpoint" placeholder="https://api.example.com/v1"></label><label>' + TEXT.aiModel + '<input name="aiModel" placeholder="gpt-4.1-mini / qwen / deepseek"></label><label>' + TEXT.aiApiKey + '<input name="aiApiKey" type="password" placeholder="API Key"></label><label>' + TEXT.aiPrompt + '<textarea name="aiPrompt" rows="4"></textarea></label></div><div class="pv-translate-actions"><button type="button" class="pv-primary pv-translate-save">' + TEXT.save + '</button></div></section>' +
         '<div class="pv-viewer"><div class="pv-viewer-swiper swiper"><div class="swiper-wrapper"></div><div class="pv-viewer-pagination"></div></div><button class="pv-viewer-close" aria-label="关闭">×</button></div>' +
       '</div>';
@@ -1401,6 +1420,7 @@
     if ((btn = e.target.closest('.pv-voice-card'))) { e.preventDefault(); e.stopPropagation(); toggleVoiceCard(btn); return; }
     if ((btn = e.target.closest('.pv-comment-reply'))) { e.preventDefault(); e.stopPropagation(); setReplyTarget(e.target.closest('.pv-comment')); return; }
     if ((btn = e.target.closest('.pv-comment-translate'))) { e.preventDefault(); e.stopPropagation(); translateComment(e.target.closest('.pv-comment')); return; }
+    if (e.target.closest('.pv-avatar-link, .pv-avatar-wrap a, .pv-username')) { e.preventDefault(); e.stopPropagation(); return; }
     if ((btn = e.target.closest('.pv-text-row'))) { if (!e.target.closest('.pv-translate-btn')) btn.classList.toggle('is-expanded'); }
   }
   function onRootPointerDown(e) {
