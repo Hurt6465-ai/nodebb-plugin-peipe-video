@@ -12,7 +12,7 @@
       link.id = 'pv-video-app-css';
       link.rel = 'stylesheet';
       link.href = (window.config && window.config.relative_path || '') +
-        '/plugins/nodebb-plugin-peipe-video/static/video-app.css?v=13';
+        '/plugins/nodebb-plugin-peipe-video/static/video-app.css?v=14';
       document.head.appendChild(link);
     }
 
@@ -20,14 +20,16 @@
       cid: {cid},
       pageSize: 12,
 
-      // v13：官方播放/声音按钮左下角短暂透传，避免跳下载页
+      // v14：播放按钮始终透传，声音按钮用安全代理开启，避免跳下载页
       preloadAhead: 1,
       preloadVideoAhead: 1,   // 只预载下一个视频 iframe
       virtualTotal: 3,
       coverPreloadAhead: 6,   // 提前预载 6 个封面
-      officialBottomReserve: 72, // 底部 TikTok 官方控件高度
-      officialControlLeftWidth: 176, // 左下角播放/声音按钮宽度
-      officialControlsExposeMs: 1000, // 只开放 1 秒给用户开启声音
+      officialBottomReserve: 64, // 底部 TikTok 官方控件高度
+      officialPlayPassWidth: 64, // 左下角官方播放按钮透传宽度
+      officialSoundLeft: 64, // 官方声音按钮/代理起点
+      officialSoundWidth: 88, // 官方声音按钮/代理宽度
+      officialControlsExposeMs: 1000, // 播放后提示声音按钮 1 秒，不影响按钮持续可点
       audioKeepAround: 1,
 
       imageMax: {imageMax},
@@ -36,11 +38,11 @@
     });
 
     // 防止 video-app.js 被重复执行
-    if (!window.__peipeVideoDiscoverV13 && !document.getElementById('pv-video-app-js')) {
+    if (!window.__peipeVideoDiscoverV14 && !document.getElementById('pv-video-app-js')) {
       var s = document.createElement('script');
       s.id = 'pv-video-app-js';
       s.src = (window.config && window.config.relative_path || '') +
-        '/plugins/nodebb-plugin-peipe-video/static/video-app.js?v=13';
+        '/plugins/nodebb-plugin-peipe-video/static/video-app.js?v=14';
       s.async = false;
       document.head.appendChild(s);
     }
