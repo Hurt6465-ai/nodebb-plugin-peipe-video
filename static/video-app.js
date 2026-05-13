@@ -15,6 +15,8 @@
     pageSize: 12,
     preloadAhead: 5,
     preloadVideoAhead: 2,
+    keepWarmVideoAhead: 2,
+    coverCacheEndpoint: '/api/v3/plugins/peipe-video/cover-cache',
     imageMax: 4,
     coverCacheMs: 7 * 24 * 60 * 60 * 1000,
     translateCacheMs: 3 * 24 * 60 * 60 * 1000,
@@ -89,6 +91,8 @@
     hasInteracted: false,
     soundUnlocked: !!safeJsonGet('pv-sound-unlocked', false),
     lastTap: { time: 0, x: 0, y: 0, timer: 0 },
+    pointer: { down: false, x: 0, y: 0, moved: false, tapIndex: -1 },
+    manualPausedKey: '',
     compose: { imageFiles: [], imageUrls: [] },
     viewer: { images: [], index: 0, swiper: null, startX: 0, startY: 0, down: false },
     comments: {
@@ -252,7 +256,7 @@
     if (refresh) {
       state.feedPage = 1; state.feedDone = false; state.list = []; state.index = 0;
       state.players.forEach(function (p) { try { if (p.iframe) p.iframe.remove(); } catch (e) {} });
-      state.players.clear(); state.imageSwipers.clear();
+      state.players.clear(); state.imageSwipers.clear(); state.manualPausedKey = '';
       updateSwiperSlides(true);
     }
     return apiFetch('/api/v3/plugins/peipe-video/feed?page=' + state.feedPage + '&pageSize=' + CONFIG.pageSize)
@@ -385,7 +389,7 @@
     var avatar = avatarSrc(author);
     var avatarHtml = avatar ? '<img class="pv-avatar" src="' + escapeHtml(avatar) + '" alt="avatar">' : '<div class="pv-avatar"></div>';
     var following = readFollow(author) || item.viewer.following;
-    var liked = !!(readVote(item.pid, item.tid) || item.viewer.liked);
+    var liked = !!item.viewer.liked;
     return '' +
       '<section class="pv-slide-item ' + (hasVideo ? 'is-video' : 'is-image') + '" data-index="' + index + '" data-tid="' + escapeHtml(item.tid || '') + '">' +
         '<div class="pv-media">' + mediaHtml + '</div>' +
@@ -594,31 +598,44 @@
   function playSlide(index, userGesture) {
     var item = state.list[index];
     if (!item || !(item.tiktoks && item.tiktoks[0])) { warmVideoWindow(index); return; }
+    var videoId = item.tiktoks[0].videoId;
+    var key = playerKey(index, videoId);
+    if (state.manualPausedKey === key && !userGesture) return;
     var player = ensureTikTokPlayer(index, !!(userGesture || state.soundUnlocked));
     if (!player || !player.iframe) return;
+    state.manualPausedKey = '';
     player.wantPlay = true;
+    player.playSeq = (player.playSeq || 0) + 1;
+    var seq = player.playSeq;
     if (userGesture || state.soundUnlocked) forcePlayerAutoplay(player);
     pauseOtherPlayers(player.key);
     var slide = findSlide(index);
     if (slide) slide.classList.add('is-loading');
     if (userGesture) { state.hasInteracted = true; state.soundUnlocked = true; safeJsonSet('pv-sound-unlocked', true); }
-    sendToPlayer(player.iframe, 'unMute');
-    sendToPlayer(player.iframe, 'play');
-    setTimeout(function () { sendToPlayer(player.iframe, 'play'); sendToPlayer(player.iframe, 'unMute'); }, 120);
-    setTimeout(function () { sendToPlayer(player.iframe, 'unMute'); sendToPlayer(player.iframe, 'play'); }, 360);
-    setTimeout(function () { sendToPlayer(player.iframe, 'unMute'); sendToPlayer(player.iframe, 'play'); }, 900);
-    setTimeout(function () { sendToPlayer(player.iframe, 'unMute'); sendToPlayer(player.iframe, 'play'); }, 1500);
-    setTimeout(function () { if (player.wantPlay && player.status !== 'playing') markSlidePlaying(index); }, 1900);
+    function stillWantsPlay() { return player.wantPlay && player.playSeq === seq && state.manualPausedKey !== player.key; }
+    function nudge() {
+      if (!stillWantsPlay()) return;
+      sendToPlayer(player.iframe, 'unMute');
+      sendToPlayer(player.iframe, 'play');
+    }
+    nudge();
+    setTimeout(nudge, 120);
+    setTimeout(nudge, 360);
+    setTimeout(nudge, 900);
+    setTimeout(nudge, 1500);
+    setTimeout(function () { if (stillWantsPlay() && player.status !== 'playing') markSlidePlaying(index); }, 1900);
   }
-  function pauseSlide(index, force) {
+  function pauseSlide(index, force, manual) {
     state.players.forEach(function (p) {
       if (p.index !== index) return;
-      p.wantPlay = false; p.status = 'paused';
+      p.wantPlay = false; p.status = 'paused'; p.playSeq = (p.playSeq || 0) + 1;
+      if (manual) state.manualPausedKey = p.key;
       if (p.iframe) {
         sendToPlayer(p.iframe, 'pause');
         setTimeout(function () { sendToPlayer(p.iframe, 'pause'); }, 60);
+        setTimeout(function () { sendToPlayer(p.iframe, 'pause'); }, 180);
       }
-      if (force || !isWarmIndex(p.index)) hardStopPlayer(p, !!force);
+      if (force || (!manual && !isWarmIndex(p.index))) hardStopPlayer(p, !!force);
     });
     var slide = findSlide(index);
     if (slide) slide.classList.remove('is-playing', 'is-loading');
@@ -627,7 +644,7 @@
     state.players.forEach(function (p, key) {
       if (key === currentKey) return;
       var shouldHardStop = p.index < state.index || !isWarmIndex(p.index) || Math.abs(p.index - state.index) > CONFIG.preloadAhead;
-      p.wantPlay = false; p.status = 'paused';
+      p.wantPlay = false; p.status = 'paused'; p.playSeq = (p.playSeq || 0) + 1;
       if (p.iframe) {
         sendToPlayer(p.iframe, 'pause');
         setTimeout(function () { sendToPlayer(p.iframe, 'pause'); }, 60);
@@ -655,7 +672,7 @@
     var item = state.list[state.index];
     var currentKey = item && item.tiktoks && item.tiktoks[0] ? playerKey(state.index, item.tiktoks[0].videoId) : '';
     pauseOtherPlayers(currentKey);
-    playSlide(state.index, !!(state.hasInteracted || state.soundUnlocked));
+    if (currentKey !== state.manualPausedKey) playSlide(state.index, !!(state.hasInteracted || state.soundUnlocked));
     prunePlayers();
   }
   function markSlidePlaying(index) {
@@ -677,7 +694,7 @@
       if (!player.iframe || player.iframe.contentWindow !== event.source) return;
       if (data.type === 'onPlayerReady') {
         player.ready = true;
-        if (player.wantPlay) { sendToPlayer(player.iframe, 'unMute'); sendToPlayer(player.iframe, 'play'); }
+        if (player.wantPlay && state.manualPausedKey !== player.key) { sendToPlayer(player.iframe, 'unMute'); sendToPlayer(player.iframe, 'play'); }
         return;
       }
       if (data.type === 'onStateChange') {
@@ -701,8 +718,28 @@
     if (!/^https?:\/\//i.test(canonical)) return Promise.resolve('');
     return fetch('https://www.tiktok.com/oembed?url=' + encodeURIComponent(canonical), { cache: 'force-cache' })
       .then(function (r) { return r.ok ? r.json() : {}; })
-      .then(function (json) { var thumb = json.thumbnail_url || ''; if (thumb) safeJsonSet(coverCacheKey(videoId), { url: thumb, expiresAt: Date.now() + CONFIG.coverCacheMs }); return thumb; })
+      .then(function (json) {
+        var thumb = json.thumbnail_url || '';
+        if (thumb) {
+          safeJsonSet(coverCacheKey(videoId), { url: thumb, expiresAt: Date.now() + CONFIG.coverCacheMs });
+          saveCoverToServer(videoId, canonical, thumb);
+        }
+        return thumb;
+      })
       .catch(function () { return ''; });
+  }
+  function saveCoverToServer(videoId, url, coverUrl) {
+    if (!videoId || !coverUrl || !CONFIG.coverCacheEndpoint) return;
+    var key = 'pv-cover-server-sent:' + videoId;
+    var sent = safeJsonGet(key, null);
+    if (sent && sent.coverUrl === coverUrl && sent.expiresAt > Date.now()) return;
+    apiFetch(CONFIG.coverCacheEndpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json; charset=utf-8', 'x-csrf-token': csrfToken() },
+      body: JSON.stringify({ videoId: String(videoId), url: url || '', coverUrl: coverUrl })
+    }).then(function () {
+      safeJsonSet(key, { coverUrl: coverUrl, expiresAt: Date.now() + CONFIG.coverCacheMs });
+    }).catch(function () {});
   }
 
   function localUserSuffix() { var u = currentUser(); return String(u && u.uid || 'guest'); }
@@ -718,17 +755,37 @@
   }
   function toggleLike(item, slide, optimistic, point) {
     if (!isLoggedIn()) return alertError(TEXT.loginFirst);
-    if (!item.pid) return alertError(TEXT.likeFail);
-    var old = !!item.viewer.liked; var next = !old;
-    item.viewer.liked = next; item.counts.likes = Math.max(0, Number(item.counts.likes || 0) + (next ? 1 : -1));
-    writeVote(item.pid, item.tid, next); updateLikeUi(slide, item); if (point && next) showHeart(point.x, point.y);
+    if (!item || !item.pid) return alertError(TEXT.likeFail);
+    if (item._votePending) return;
+    var old = !!(item.viewer && item.viewer.liked);
+    var oldCount = Math.max(0, Number(item.counts && item.counts.likes || 0));
+    var next = !old;
+    item._votePending = true;
+    item.viewer = item.viewer || {};
+    item.counts = item.counts || {};
+    item.viewer.liked = next;
+    item.counts.likes = Math.max(0, oldCount + (next ? 1 : -1));
+    updateLikeUi(slide, item);
+    if (point && next) showHeart(point.x, point.y);
     apiFetch('/api/v3/posts/' + encodeURIComponent(item.pid) + '/vote', {
       method: next ? 'PUT' : 'DELETE',
       headers: { 'content-type': 'application/json; charset=utf-8', 'x-csrf-token': csrfToken() },
       body: JSON.stringify({ delta: 1 })
-    }).catch(function () {
-      item.viewer.liked = old; item.counts.likes = Math.max(0, Number(item.counts.likes || 0) + (next ? -1 : 1));
-      writeVote(item.pid, item.tid, old); updateLikeUi(slide, item); alertError(next ? TEXT.likeFail : TEXT.unlikeFail);
+    }).then(function (json) {
+      var payload = json && (json.response || json) || {};
+      var votes = payload.votes || payload.upvotes || payload.voteCount;
+      item.viewer.liked = next;
+      if (votes !== undefined && votes !== null && !Number.isNaN(Number(votes))) item.counts.likes = Math.max(0, Number(votes));
+      writeVote(item.pid, item.tid, next);
+      updateLikeUi(slide, item);
+    }).catch(function (err) {
+      item.viewer.liked = old;
+      item.counts.likes = oldCount;
+      writeVote(item.pid, item.tid, old);
+      updateLikeUi(slide, item);
+      alertError((err && err.message) || (next ? TEXT.likeFail : TEXT.unlikeFail));
+    }).finally(function () {
+      item._votePending = false;
     });
   }
   function showHeart(x, y) {
@@ -880,11 +937,12 @@
         (rec && rec.classList.contains('is-open') ? rec.offsetHeight : 0) +
         (send ? send.offsetHeight : 0) +
         Math.min(list ? list.scrollHeight : 0, Math.round(window.innerHeight * 0.56));
-      var minH = Math.min(Math.round(window.innerHeight * 0.48), 360);
+      var minH = Math.min(Math.round(window.innerHeight * 0.30), 260);
       var maxH = Math.min(Math.round(window.innerHeight * 0.88), 760);
       var h = Math.max(minH, Math.min(maxH, content));
-      panel.style.height = h + 'px';
-      if (list) list.style.maxHeight = Math.max(96, h - ((grip ? grip.offsetHeight : 0) + (head ? head.offsetHeight : 0) + (reply && reply.classList.contains('is-open') ? reply.offsetHeight : 0) + (voice && voice.classList.contains('is-open') ? voice.offsetHeight : 0) + (rec && rec.classList.contains('is-open') ? rec.offsetHeight : 0) + (send ? send.offsetHeight : 0) + 42)) + 'px';
+      panel.style.setProperty('height', h + 'px', 'important');
+      panel.style.setProperty('max-height', maxH + 'px', 'important');
+      if (list) list.style.setProperty('max-height', Math.max(96, h - ((grip ? grip.offsetHeight : 0) + (head ? head.offsetHeight : 0) + (reply && reply.classList.contains('is-open') ? reply.offsetHeight : 0) + (voice && voice.classList.contains('is-open') ? voice.offsetHeight : 0) + (rec && rec.classList.contains('is-open') ? rec.offsetHeight : 0) + (send ? send.offsetHeight : 0) + 42)) + 'px', 'important');
     });
   }
   function openComments(item) {
@@ -1071,26 +1129,23 @@
 
   function handleTap(e, index) {
     var item = state.list[index];
-    if (!item) return;
-    var now = Date.now(); var last = state.lastTap;
-    var dist = Math.hypot(e.clientX - last.x, e.clientY - last.y);
-    if (last.time && now - last.time < CONFIG.doubleTapMs && dist < 44) {
-      clearTimeout(last.timer); last.time = 0; toggleLike(item, findSlide(index), true, { x: e.clientX, y: e.clientY }); return;
+    if (!item || !(item.tiktoks && item.tiktoks[0])) return;
+    clearTimeout(state.lastTap.timer);
+    var player = Array.from(state.players.values()).find(function (p) { return p.index === index; });
+    if (player && (player.status === 'playing' || player.wantPlay) && state.manualPausedKey !== player.key) {
+      pauseSlide(index, false, true);
+    } else {
+      state.hasInteracted = true;
+      state.soundUnlocked = true;
+      state.manualPausedKey = '';
+      safeJsonSet('pv-sound-unlocked', true);
+      playSlide(index, true);
     }
-    last.time = now; last.x = e.clientX; last.y = e.clientY;
-    clearTimeout(last.timer);
-    last.timer = setTimeout(function () {
-      if (!(item.tiktoks && item.tiktoks[0])) return;
-      var player = Array.from(state.players.values()).find(function (p) { return p.index === index; });
-      if (player && player.status === 'playing') pauseSlide(index);
-      else { state.hasInteracted = true; playSlide(index, true); }
-    }, CONFIG.doubleTapMs + 20);
   }
   function unlockSoundFromGesture() {
     state.hasInteracted = true;
     state.soundUnlocked = true;
     safeJsonSet('pv-sound-unlocked', true);
-    playSlide(state.index, true);
   }
 
   function buildChrome() {
@@ -1176,11 +1231,17 @@
     if ((btn = e.target.closest('.pv-text-row'))) { if (!e.target.closest('.pv-translate-btn')) btn.classList.toggle('is-expanded'); }
   }
   function onRootPointerDown(e) {
+    var tap = e.target.closest('.pv-tap-zone');
+    state.pointer.down = !!tap;
+    state.pointer.x = e.clientX;
+    state.pointer.y = e.clientY;
+    state.pointer.moved = false;
+    state.pointer.tapIndex = tap ? Number(tap.dataset.index) : -1;
     if (!e.target.closest('input, textarea, select, .pv-comments-panel, .pv-compose-panel, .pv-translate-panel, .pv-viewer')) unlockSoundFromGesture();
     var textRow = e.target.closest('.pv-text-row');
     var translateBtn = e.target.closest('.pv-translate-btn, .pv-comment-translate');
     if (textRow || translateBtn) { clearTimeout(state.translateLongPressTimer); state.translateLongPressTimer = setTimeout(function () { openTranslateSettings(); }, 650); }
-    var tap = e.target.closest('.pv-tap-zone'); if (tap) state.hasInteracted = true;
+    if (tap) state.hasInteracted = true;
     var panel = $('.pv-comments-panel', state.root);
     if (panel && panel.classList.contains('is-open') && e.target.closest('.pv-comments-panel') && !e.target.closest('input,button,.pv-voice-card')) {
       var canDrag = e.target.closest('.pv-panel-grip, .pv-comments-drag');
@@ -1189,6 +1250,7 @@
     }
   }
   function onRootPointerMove(e) {
+    if (state.pointer.down && Math.hypot(e.clientX - state.pointer.x, e.clientY - state.pointer.y) > 14) state.pointer.moved = true;
     var panel = $('.pv-comments-panel', state.root);
     if (state.comments.dragCandidate && !state.comments.dragging) {
       var dy0 = e.clientY - state.comments.dragStartY;
@@ -1211,9 +1273,10 @@
     }
     state.comments.dragCandidate = false;
     var tap = e.target.closest('.pv-tap-zone');
-    if (tap) { e.preventDefault(); e.stopPropagation(); handleTap(e, Number(tap.dataset.index)); }
+    if (tap && state.pointer.down && !state.pointer.moved) { e.preventDefault(); e.stopPropagation(); handleTap(e, Number(tap.dataset.index)); }
+    state.pointer.down = false; state.pointer.tapIndex = -1; state.pointer.moved = false;
   }
-  function onRootPointerCancel() { clearTimeout(state.translateLongPressTimer); state.comments.dragging = false; state.comments.dragCandidate = false; var p = $('.pv-comments-panel', state.root); if (p) p.style.transform = ''; }
+  function onRootPointerCancel() { clearTimeout(state.translateLongPressTimer); state.comments.dragging = false; state.comments.dragCandidate = false; state.pointer.down = false; state.pointer.moved = false; var p = $('.pv-comments-panel', state.root); if (p) p.style.transform = ''; }
 
   function showEmpty(text) { var old = $('.pv-empty-page', state.root); if (old) old.remove(); var div = document.createElement('div'); div.className = 'pv-empty-page'; div.textContent = text || TEXT.empty; state.root.appendChild(div); }
   function injectRuntimeFixStyles() {
