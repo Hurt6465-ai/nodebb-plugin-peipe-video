@@ -11,11 +11,20 @@ const CONFIG = {
   pageSize: 12,
   maxPageSize: 30,
   imageMax: 4,
+
   publicItemTtl: 72 * 60 * 60 * 1000,
   firstPageTtl: 2 * 60 * 1000,
   oldPageTtl: 72 * 60 * 60 * 1000,
   countsTtl: 45 * 1000,
-  viewerTtl: 2 * 60 * 1000,
+
+  // Viewer state includes user-specific liked/following state.
+  // Keep this short, or disable caching inside getViewer if you prefer absolute freshness.
+  viewerTtl: 20 * 1000,
+
+  // Server-side TikTok cover cache.
+  // First user fetches oEmbed on frontend, then POSTs thumbnail here.
+  // Later users receive coverUrl directly from feed.
+  coverTtl: 14 * 24 * 60 * 60 * 1000,
 };
 
 const RE = {
@@ -35,8 +44,14 @@ let Posts;
 let User;
 let routeReady = false;
 
-function now() { return Date.now(); }
-function norm(value) { return String(value || '').replace(/\s+/g, ' ').trim(); }
+function now() {
+  return Date.now();
+}
+
+function norm(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
 function getCached(key) {
   const record = cache.get(key);
   if (!record || record.expiresAt <= now()) {
@@ -45,47 +60,229 @@ function getCached(key) {
   }
   return record.value;
 }
+
 function setCached(key, value, ttl) {
   cache.set(key, { value, expiresAt: now() + ttl });
   return value;
 }
+
 function deleteCachePrefix(prefix) {
   for (const key of cache.keys()) {
-    if (key.startsWith(prefix)) cache.delete(key);
+    if (key.startsWith(prefix)) {
+      cache.delete(key);
+    }
   }
 }
+
 function safeNumber(value, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
 }
+
 function canonicalTikTokUrl(url) {
   const text = String(url || '').replace(/&amp;/g, '&').trim();
   const match = text.match(RE.tiktokOne);
   return match ? `https://www.tiktok.com/@${match[1]}/video/${match[2]}` : text;
 }
+
+function normalizeVideoId(videoId) {
+  videoId = String(videoId || '').trim();
+  return /^\d{8,32}$/.test(videoId) ? videoId : '';
+}
+
+function coverCacheKey(videoId) {
+  return `peipe-video:cover:${videoId}`;
+}
+
+function isSafeCoverUrl(url) {
+  try {
+    const u = new URL(String(url || ''));
+    if (u.protocol !== 'https:') {
+      return false;
+    }
+
+    const host = u.hostname.toLowerCase();
+
+    return (
+      host === 'www.tiktok.com' ||
+      host.endsWith('.tiktok.com') ||
+      host === 'tiktokcdn.com' ||
+      host.endsWith('.tiktokcdn.com') ||
+      host.endsWith('.tiktokcdn-us.com') ||
+      host.endsWith('.byteoversea.com') ||
+      host.endsWith('.ibytedtos.com') ||
+      host.endsWith('.muscdn.com') ||
+      host.endsWith('.akamaized.net')
+    );
+  } catch (err) {
+    return false;
+  }
+}
+
+async function saveCoverCache(data) {
+  await ensureModules();
+
+  const videoId = normalizeVideoId(data && data.videoId);
+  const coverUrl = String((data && (data.coverUrl || data.thumbnailUrl)) || '').trim();
+
+  if (!videoId) {
+    const err = new Error('invalid-video-id');
+    err.status = 400;
+    throw err;
+  }
+
+  if (!isSafeCoverUrl(coverUrl)) {
+    const err = new Error('invalid-cover-url');
+    err.status = 400;
+    throw err;
+  }
+
+  const payload = {
+    videoId,
+    coverUrl,
+    thumbnailUrl: coverUrl,
+    sourceUrl: String((data && (data.sourceUrl || data.url)) || '').slice(0, 500),
+    tid: String((data && data.tid) || ''),
+    pid: String((data && data.pid) || ''),
+    updatedAt: now(),
+    expiresAt: now() + CONFIG.coverTtl,
+  };
+
+  await db.setObject(coverCacheKey(videoId), payload);
+
+  cache.set(`cover:${videoId}`, {
+    value: payload,
+    expiresAt: payload.expiresAt,
+  });
+
+  return payload;
+}
+
+async function getCoverCache(videoId) {
+  await ensureModules();
+
+  videoId = normalizeVideoId(videoId);
+  if (!videoId) {
+    return null;
+  }
+
+  const memory = getCached(`cover:${videoId}`);
+  if (memory && memory.coverUrl) {
+    return memory;
+  }
+
+  const saved = await db.getObject(coverCacheKey(videoId));
+  if (!saved || !saved.coverUrl) {
+    return null;
+  }
+
+  if (Number(saved.expiresAt || 0) && Number(saved.expiresAt || 0) < now()) {
+    return null;
+  }
+
+  setCached(`cover:${videoId}`, saved, Math.min(CONFIG.coverTtl, 24 * 60 * 60 * 1000));
+  return saved;
+}
+
+async function attachCoverCaches(items) {
+  await ensureModules();
+
+  items = Array.isArray(items) ? items : [];
+
+  const videoIds = [];
+  for (const item of items) {
+    const tiktoks = Array.isArray(item && item.tiktoks) ? item.tiktoks : [];
+    for (const tk of tiktoks) {
+      const videoId = normalizeVideoId(tk && tk.videoId);
+      if (videoId) {
+        videoIds.push(videoId);
+      }
+    }
+  }
+
+  const uniqueIds = Array.from(new Set(videoIds));
+  if (!uniqueIds.length) {
+    return items;
+  }
+
+  const rows = await db.getObjects(uniqueIds.map(coverCacheKey));
+  const coverMap = {};
+
+  rows.forEach((row) => {
+    if (!row || !row.videoId || !row.coverUrl) {
+      return;
+    }
+    if (Number(row.expiresAt || 0) && Number(row.expiresAt || 0) < now()) {
+      return;
+    }
+
+    coverMap[String(row.videoId)] = row.coverUrl;
+    setCached(`cover:${row.videoId}`, row, Math.min(CONFIG.coverTtl, 24 * 60 * 60 * 1000));
+  });
+
+  for (const item of items) {
+    const tiktoks = Array.isArray(item && item.tiktoks) ? item.tiktoks : [];
+
+    for (const tk of tiktoks) {
+      const videoId = normalizeVideoId(tk && tk.videoId);
+      const coverUrl = videoId ? coverMap[videoId] : '';
+
+      if (!coverUrl) {
+        continue;
+      }
+
+      tk.coverUrl = tk.coverUrl || coverUrl;
+      tk.thumbnailUrl = tk.thumbnailUrl || coverUrl;
+
+      item.coverUrl = item.coverUrl || coverUrl;
+      item.thumbnailUrl = item.thumbnailUrl || coverUrl;
+    }
+  }
+
+  return items;
+}
+
 function collectTikToks(text) {
   const seen = new Set();
   const out = [];
+
   String(text || '').replace(RE.tiktokGlobal, (match, videoId) => {
     if (videoId && !seen.has(videoId)) {
       seen.add(videoId);
-      out.push({ videoId, url: canonicalTikTokUrl(match) });
+      out.push({
+        videoId,
+        url: canonicalTikTokUrl(match),
+        coverUrl: '',
+        thumbnailUrl: '',
+      });
     }
     return match;
   });
+
   return out;
 }
+
 async function resolveTikTokShortUrl(url) {
   const raw = String(url || '').replace(/&amp;/g, '&').trim();
-  if (!raw || !RE.tiktokShortOne.test(raw)) return '';
+  if (!raw || !RE.tiktokShortOne.test(raw)) {
+    return '';
+  }
+
   const key = `short:${raw}`;
   const cached = getCached(key);
-  if (cached !== null) return cached;
+  if (cached !== null) {
+    return cached;
+  }
+
   try {
-    if (typeof fetch !== 'function') return setCached(key, '', CONFIG.publicItemTtl);
+    if (typeof fetch !== 'function') {
+      return setCached(key, '', CONFIG.publicItemTtl);
+    }
+
     const res = await fetch(raw, { method: 'GET', redirect: 'follow' });
     const finalUrl = res && res.url ? res.url : '';
     const match = finalUrl.match(RE.tiktokOne);
+
     if (match && match[2]) {
       const canonical = canonicalTikTokUrl(finalUrl);
       return setCached(key, canonical, CONFIG.publicItemTtl);
@@ -93,54 +290,97 @@ async function resolveTikTokShortUrl(url) {
   } catch (err) {
     winston.warn(`[nodebb-plugin-peipe-video] TikTok short url resolve failed: ${raw} ${err.message}`);
   }
+
   return setCached(key, '', 6 * 60 * 60 * 1000);
 }
+
 async function collectTikToksAsync(text) {
   const out = collectTikToks(text);
   const seen = new Set(out.map(item => item.videoId));
   const shorts = [];
-  String(text || '').replace(RE.tiktokShort, (match) => { if (!shorts.includes(match)) shorts.push(match); return match; });
+
+  String(text || '').replace(RE.tiktokShort, (match) => {
+    if (!shorts.includes(match)) {
+      shorts.push(match);
+    }
+    return match;
+  });
+
   for (const shortUrl of shorts.slice(0, 4)) {
     const resolved = await resolveTikTokShortUrl(shortUrl);
     const match = resolved && resolved.match(RE.tiktokOne);
+
     if (match && match[2] && !seen.has(match[2])) {
       seen.add(match[2]);
-      out.push({ videoId: match[2], url: canonicalTikTokUrl(resolved) });
+      out.push({
+        videoId: match[2],
+        url: canonicalTikTokUrl(resolved),
+        coverUrl: '',
+        thumbnailUrl: '',
+      });
     }
   }
+
   return out;
 }
+
+function isAutoText(text) {
+  const clean = norm(String(text || '').replace(/[•・·|｜_／/\\-]+/g, ' '));
+  return !clean || /^(?:动态|新动态|图片分享|图片动态|语音消息|语音动态|voice message|audio message|image|photo|picture)(?:\s*:??\s*\d{1,2}:\d{2}(?::\d{2})?)?$/i.test(clean);
+}
+
 function cleanDisplayText(text) {
   const raw = String(text || '')
     .replace(RE.tiktokGlobal, '')
     .replace(RE.tiktokToken, '')
     .replace(RE.tiktokShort, '')
+    .replace(/https?:\/\/(?:vt|vm)\.tiktok\.com\/[^\s<>'"]+/ig, '')
+    .replace(/(?:https?[-:\/]+)?(?:www[.-])?tiktok[.-]com[-\/\w@.%=&?]+/ig, '')
     .replace(/!\[[^\]]*\]\([^)]+\)/g, '')
     .replace(/\[\s*(?:语音消息|语音动态|voice\s*message|audio\s*message)[^\]]*\]\([^)]+\)/ig, '')
     .replace(/<[^>]*>/g, ' ')
     .replace(/&nbsp;/g, ' ')
     .replace(/&amp;/g, '&');
-  return raw.split(/[\r\n]+/).map(norm).filter(Boolean).join('\n');
+
+  return raw
+    .split(/[\r\n]+/)
+    .map(norm)
+    .filter(line => line && !isAutoText(line))
+    .join('\n');
 }
+
 function parseMediaFromContent(content) {
   const raw = String(content || '');
   const out = { text: '', images: [], audios: [], tiktoks: collectTikToks(raw) };
 
   raw.replace(/<img[^>]+src=["']([^"']+)["'][^>]*>/ig, (m, src) => {
-    if (src && !out.images.includes(src)) out.images.push(src);
+    if (src && !out.images.includes(src)) {
+      out.images.push(src);
+    }
     return m;
   });
+
   raw.replace(/<(?:audio|source)[^>]+src=["']([^"']+)["'][^>]*>/ig, (m, src) => {
-    if (src && RE.audioExt.test(src) && !out.audios.some(item => item.url === src)) out.audios.push({ url: src, label: '语音消息' });
+    if (src && RE.audioExt.test(src) && !out.audios.some(item => item.url === src)) {
+      out.audios.push({ url: src, label: '语音消息' });
+    }
     return m;
   });
+
   raw.replace(/!\[[^\]]*\]\(([^)]+)\)/g, (m, src) => {
-    if (src && !out.images.includes(src)) out.images.push(src);
+    if (src && !out.images.includes(src)) {
+      out.images.push(src);
+    }
     return m;
   });
+
   raw.replace(/\[([^\]]*)\]\(([^)]+)\)/g, (m, label, href) => {
-    if (href && RE.imageExt.test(href) && !out.images.includes(href)) out.images.push(href);
-    if (href && RE.audioExt.test(href) && !out.audios.some(item => item.url === href)) out.audios.push({ url: href, label: norm(label) || '语音消息' });
+    if (href && RE.imageExt.test(href) && !out.images.includes(href)) {
+      out.images.push(href);
+    }
+    if (href && RE.audioExt.test(href) && !out.audios.some(item => item.url === href)) {
+      out.audios.push({ url: href, label: norm(label) || '语音消息' });
+    }
     return m;
   });
 
@@ -148,12 +388,18 @@ function parseMediaFromContent(content) {
   out.images = out.images.slice(0, CONFIG.imageMax);
   return out;
 }
+
 function topicHref(topic) {
   const tid = topic && topic.tid;
   const slug = topic && topic.slug;
-  if (!tid) return '#';
+
+  if (!tid) {
+    return '#';
+  }
+
   return slug ? `/topic/${tid}/${slug}` : `/topic/${tid}`;
 }
+
 async function getModule(name) {
   try {
     return require.main.require(name);
@@ -161,65 +407,113 @@ async function getModule(name) {
     return null;
   }
 }
+
 async function ensureModules() {
-  if (routeReady) return;
+  if (routeReady) {
+    return;
+  }
+
   db = db || await getModule('./src/database');
   Topics = Topics || await getModule('./src/topics');
   Posts = Posts || await getModule('./src/posts');
   User = User || await getModule('./src/user');
+
   routeReady = true;
 }
+
 async function getTopicData(tid) {
-  if (!Topics) return null;
-  if (typeof Topics.getTopicData === 'function') return await Topics.getTopicData(tid);
+  if (!Topics) {
+    return null;
+  }
+
+  if (typeof Topics.getTopicData === 'function') {
+    return await Topics.getTopicData(tid);
+  }
+
   if (typeof Topics.getTopicsData === 'function') {
     const arr = await Topics.getTopicsData([tid]);
     return arr && arr[0];
   }
+
   return null;
 }
+
 async function getPostData(pid) {
-  if (!Posts || !pid) return null;
-  if (typeof Posts.getPostData === 'function') return await Posts.getPostData(pid);
+  if (!Posts || !pid) {
+    return null;
+  }
+
+  if (typeof Posts.getPostData === 'function') {
+    return await Posts.getPostData(pid);
+  }
+
   if (typeof Posts.getPostsData === 'function') {
     const arr = await Posts.getPostsData([pid]);
     return arr && arr[0];
   }
+
   return null;
 }
+
 async function getUserFields(uid) {
-  if (!User || !uid) return {};
+  if (!User || !uid) {
+    return {};
+  }
+
   const fields = ['uid', 'username', 'userslug', 'picture', 'uploadedpicture', 'displayname', 'status'];
-  if (typeof User.getUserFields === 'function') return await User.getUserFields(uid, fields);
+
+  if (typeof User.getUserFields === 'function') {
+    return await User.getUserFields(uid, fields);
+  }
+
   if (typeof User.getUsersFields === 'function') {
     const arr = await User.getUsersFields([uid], fields);
-    return arr && arr[0] || {};
+    return (arr && arr[0]) || {};
   }
+
   return {};
 }
+
 function normalizeAuthor(user, fallback = {}) {
   user = user || {};
   const uid = String(user.uid || user.userId || user.userid || fallback.uid || '');
   const username = norm(user.displayname || user.displayName || user.username || fallback.username || fallback.displayname || fallback.userslug || '用户');
   const userslug = String(user.userslug || fallback.userslug || username || '').replace(/^@/, '');
   const picture = user.picture || user.uploadedpicture || user.avatar || fallback.picture || fallback.uploadedpicture || '';
+
   return { uid, username, userslug, picture };
 }
+
 function findMainPid(topic, firstPost) {
-  const candidates = [topic && topic.mainPid, topic && topic.main_pid, topic && topic.pid, firstPost && firstPost.pid];
+  const candidates = [
+    topic && topic.mainPid,
+    topic && topic.main_pid,
+    topic && topic.pid,
+    firstPost && firstPost.pid,
+  ];
+
   const found = candidates.find(value => /^\d+$/.test(String(value || '')));
   return found ? String(found) : '';
 }
+
 async function buildPublicItem(tid) {
   const cached = getCached(`item:${tid}`);
-  if (cached) return cached;
+  if (cached) {
+    return cached;
+  }
 
   const topic = await getTopicData(tid);
-  if (!topic || Number(topic.deleted || 0)) return null;
-  if (Number(topic.cid || CONFIG.cid) !== Number(CONFIG.cid)) return null;
+  if (!topic || Number(topic.deleted || 0)) {
+    return null;
+  }
+
+  if (Number(topic.cid || CONFIG.cid) !== Number(CONFIG.cid)) {
+    return null;
+  }
 
   let pid = findMainPid(topic, null);
   let post = pid ? await getPostData(pid) : null;
+
   if (!post && Array.isArray(topic.posts) && topic.posts[0]) {
     post = topic.posts[0];
     pid = findMainPid(topic, post);
@@ -228,8 +522,12 @@ async function buildPublicItem(tid) {
   const content = String((post && (post.content || post.raw || post.markdown || post.text)) || topic.title || '');
   const media = parseMediaFromContent(content);
   media.tiktoks = await collectTikToksAsync(content);
+
   const authorRaw = await getUserFields((post && post.uid) || topic.uid);
   const author = normalizeAuthor(authorRaw, post || topic);
+
+  const cleanTitle = cleanDisplayText(topic.titleRaw || topic.title || '');
+  const cleanText = media.text || cleanTitle;
 
   const item = {
     source: 'plugin-feed',
@@ -238,73 +536,97 @@ async function buildPublicItem(tid) {
     pid: String(pid || ''),
     cid: Number(topic.cid || CONFIG.cid),
     href: topicHref(topic),
-    title: cleanDisplayText(topic.titleRaw || topic.title || ''),
-    text: media.text || cleanDisplayText(topic.titleRaw || topic.title || ''),
+    title: isAutoText(cleanTitle) ? '' : cleanTitle,
+    text: isAutoText(cleanText) ? '' : cleanText,
     raw: content,
     images: media.images.slice(0, CONFIG.imageMax),
     audios: media.audios,
-    tiktoks: media.tiktoks,
+    tiktoks: media.tiktoks.map(tk => Object.assign({}, tk, {
+      coverUrl: tk.coverUrl || '',
+      thumbnailUrl: tk.thumbnailUrl || '',
+    })),
     createdAt: (post && (post.timestamp || post.timestampISO)) || topic.timestamp || topic.timestampISO || topic.lastposttime || 0,
     author,
     coverUrl: '',
+    thumbnailUrl: '',
     counts: { likes: 0, comments: 0 },
     viewer: { liked: false, following: false, canComment: true },
   };
 
   return setCached(`item:${tid}`, item, CONFIG.publicItemTtl);
 }
+
 async function getCounts(item) {
   const key = `counts:${item.tid}`;
   const cached = getCached(key);
-  if (cached) return cached;
+  if (cached) {
+    return cached;
+  }
+
   const topic = await getTopicData(item.tid);
   const post = item.pid ? await getPostData(item.pid) : null;
-  const likes = safeNumber(post && (post.votes !== undefined ? post.votes : post.upvotes), safeNumber(topic && topic.votes, 0));
+
+  const likes = safeNumber(
+    post && (post.votes !== undefined ? post.votes : post.upvotes),
+    safeNumber(topic && topic.votes, 0)
+  );
   const postCount = safeNumber(topic && (topic.postcount || topic.posts || topic.postCount), 1);
   const counts = { likes: Math.max(0, likes), comments: Math.max(0, postCount - 1) };
+
   return setCached(key, counts, CONFIG.countsTtl);
 }
-async function getViewer(uid, item) {
-  if (!uid) return { liked: false, following: false, canComment: false };
-  const key = `viewer:${uid}:${item.tid}`;
-  const cached = getCached(key);
-  if (cached) return cached;
 
+async function getViewer(uid, item) {
+  if (!uid) {
+    return { liked: false, following: false, canComment: false };
+  }
+
+  // Do not memory-cache viewer state aggressively. Liked/following state changes often,
+  // and stale state was causing red heart / zero count confusion on the frontend.
   let liked = false;
+
   try {
-    if (Posts && typeof Posts.hasVoted === 'function' && item.pid) {
-      liked = !!await Posts.hasVoted(item.pid, uid);
-    } else if (db && item.pid) {
+    if (db && item.pid) {
       liked = !!await db.isSetMember(`pid:${item.pid}:upvotes`, uid);
+    } else if (Posts && typeof Posts.hasVoted === 'function' && item.pid) {
+      liked = !!await Posts.hasVoted(item.pid, uid);
     }
   } catch (err) {}
 
   let following = false;
+
   try {
     if (User && typeof User.isFollowing === 'function' && item.author && item.author.uid) {
       following = !!await User.isFollowing(uid, item.author.uid);
     }
   } catch (err) {}
 
-  const viewer = { liked, following, canComment: true };
-  return setCached(key, viewer, CONFIG.viewerTtl);
+  return { liked, following, canComment: true };
 }
+
 async function getTids(cid, start, stop) {
   await ensureModules();
-  if (!db || typeof db.getSortedSetRevRange !== 'function') return [];
+
+  if (!db || typeof db.getSortedSetRevRange !== 'function') {
+    return [];
+  }
 
   // Use the creation-time sorted set so comments/replies do not bump old videos to the top.
   // NodeBB also maintains cid:{cid}:tids for active/bumped sorting on many installs; that is only a fallback here.
   let tids = await db.getSortedSetRevRange(`cid:${cid}:tids:create`, start, stop);
+
   if (!tids || !tids.length) {
     tids = await db.getSortedSetRevRange(`cid:${cid}:tids`, start, stop);
   }
+
   return (tids || []).map(String).filter(Boolean);
 }
+
 async function getFeed(uid, page, pageSize) {
   const start = Math.max(0, (page - 1) * pageSize);
   const stop = start + pageSize * 2 - 1;
   const pageKey = `feed:${CONFIG.cid}:${page}:${pageSize}`;
+
   let tids = getCached(pageKey);
   if (!tids) {
     tids = await getTids(CONFIG.cid, start, stop);
@@ -312,28 +634,51 @@ async function getFeed(uid, page, pageSize) {
   }
 
   const items = [];
+
   for (const tid of tids) {
-    if (items.length >= pageSize) break;
+    if (items.length >= pageSize) {
+      break;
+    }
+
     const item = await buildPublicItem(tid);
-    if (!item) continue;
-    if (!item.tiktoks.length && !item.images.length) continue;
+    if (!item) {
+      continue;
+    }
+
+    if (!item.tiktoks.length && !item.images.length) {
+      continue;
+    }
+
     const counts = await getCounts(item);
     const viewer = await getViewer(uid, item);
+
     items.push(Object.assign({}, item, {
       counts,
       viewer,
       images: item.images.slice(0, CONFIG.imageMax),
+      tiktoks: item.tiktoks.map(tk => Object.assign({}, tk)),
     }));
   }
-  return { items, page, pageSize, hasMore: tids.length > items.length || tids.length >= pageSize };
+
+  await attachCoverCaches(items);
+
+  return {
+    items,
+    page,
+    pageSize,
+    hasMore: tids.length > items.length || tids.length >= pageSize,
+  };
 }
+
 function getReqUid(req) {
   return Number(req.uid || (req.user && req.user.uid) || 0);
 }
+
 function invalidateFeedCaches() {
   deleteCachePrefix('feed:');
   deleteCachePrefix('item:');
   deleteCachePrefix('counts:');
+  deleteCachePrefix('viewer:');
 }
 
 plugin.clearCaches = async function clearCaches() {
@@ -342,6 +687,7 @@ plugin.clearCaches = async function clearCaches() {
 
 plugin.init = async function init(params) {
   const { router } = params;
+
   routeHelpers.setupPageRoute(router, '/video', [], (req, res) => {
     res.render('video', {
       title: '发现',
@@ -359,6 +705,7 @@ plugin.addRoutes = async function addRoutes({ router, middleware, helpers }) {
       const page = Math.max(1, safeNumber(req.query.page, 1));
       const pageSize = Math.min(CONFIG.maxPageSize, Math.max(1, safeNumber(req.query.pageSize, CONFIG.pageSize)));
       const response = await getFeed(getReqUid(req), page, pageSize);
+
       helpers.formatApiResponse(200, res, response);
     } catch (err) {
       winston.error(`[nodebb-plugin-peipe-video] feed failed: ${err.stack || err.message}`);
@@ -366,8 +713,48 @@ plugin.addRoutes = async function addRoutes({ router, middleware, helpers }) {
     }
   });
 
+  routeHelpers.setupApiRoute(router, 'post', '/peipe-video/cover', [middleware.ensureLoggedIn], async (req, res) => {
+    try {
+      const saved = await saveCoverCache(req.body || {});
+
+      helpers.formatApiResponse(200, res, {
+        ok: true,
+        videoId: saved.videoId,
+        coverUrl: saved.coverUrl,
+        thumbnailUrl: saved.thumbnailUrl,
+      });
+    } catch (err) {
+      winston.warn(`[nodebb-plugin-peipe-video] cover cache failed: ${err.stack || err.message}`);
+      helpers.formatApiResponse(err.status || 500, res, {
+        ok: false,
+        error: err.message || 'cover-cache-failed',
+      });
+    }
+  });
+
+  routeHelpers.setupApiRoute(router, 'get', '/peipe-video/cover/:videoId', [], async (req, res) => {
+    try {
+      const saved = await getCoverCache(req.params.videoId);
+
+      helpers.formatApiResponse(200, res, {
+        ok: true,
+        videoId: normalizeVideoId(req.params.videoId),
+        coverUrl: saved && saved.coverUrl || '',
+        thumbnailUrl: saved && saved.thumbnailUrl || '',
+      });
+    } catch (err) {
+      winston.warn(`[nodebb-plugin-peipe-video] cover read failed: ${err.stack || err.message}`);
+      helpers.formatApiResponse(err.status || 500, res, {
+        ok: false,
+        error: err.message || 'cover-read-failed',
+      });
+    }
+  });
+
   routeHelpers.setupApiRoute(router, 'post', '/peipe-video/cache/purge', [middleware.admin.checkPrivileges], async (req, res) => {
     invalidateFeedCaches();
+    deleteCachePrefix('cover:');
+
     helpers.formatApiResponse(200, res, { ok: true });
   });
 };
