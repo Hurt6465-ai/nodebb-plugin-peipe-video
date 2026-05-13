@@ -1,12 +1,11 @@
-/* Peipe /video mobile discover page v7 SEA final - compressed images + dedup CSS + follow lower-left + playback watchdog
-   - Adds cost-effective image compression for compose images: 1080px / ~90KB target, WebP preferred
-   - HEIC/HEIF are converted when the browser can decode them; if conversion fails, upload is rejected
-   - GIF/SVG are rejected for compose image uploads to avoid large/unsafe originals
-   - Feed images use cover + centered crop to avoid black side bars; viewer still shows full image
-   - Follow button moved to avatar lower-left and follow API uses raw NodeBB v3 fetch
-   - Manual video pause shows a center play button
-   - Current TikTok iframe has a lightweight stuck/loading watchdog that soft-refreshes and retries playback
-   - TikTok playback/comment/translate behavior kept from v7
+/* Peipe /video mobile discover page v7.1 SEA - bandwidth-friendly playback
+   修复说明：
+   - 减少同时活跃 iframe 数量（当前 + 后 1 个），避免争抢带宽
+   - 默认关闭激进段预热（segment prewarm），改为按需懒加载
+   - Watchdog 放宽到 9s，并优先用 play 唤醒，避免频繁 reload src
+   - 滑动过程中不再 prime 新视频，只在 slideChange 完成后播放
+   - 减少 playSlide 重试次数，避免与 watchdog 叠加
+   - 离开当前视频后立即释放后台 iframe，仅保留下一个作为预热
 */
 (function () {
   'use strict';
@@ -33,13 +32,13 @@
   var CONFIG = deepMerge({
     cid: 6,
     pageSize: 12,
-    preloadAhead: 6,
-    preloadVideoAhead: 2,
-    keepWarmVideoAhead: 2,
-    keepWarmVideoBehind: 1,
-    enableSegmentPrewarm: true,
-    segmentPrewarmMs: 180,
-    playbackWatchdogMs: 5400,
+    preloadAhead: 4,
+    preloadVideoAhead: 1,
+    keepWarmVideoAhead: 1,
+    keepWarmVideoBehind: 0,
+    enableSegmentPrewarm: false,
+    segmentPrewarmMs: 260,
+    playbackWatchdogMs: 9000,
     coverCacheEndpoint: '/api/v3/plugins/peipe-video/cover',
     imageMax: 4,
     imageConfig: {
@@ -57,13 +56,12 @@
     swiperCdnCss: '/plugins/nodebb-plugin-peipe-video/static/lib/swiper-bundle.min.css'
   }, window.PEIPE_VIDEO_CONFIG || {});
 
-  // Accept both names. video.tpl uses coverCacheApi; older JS used coverCacheEndpoint.
   if (CONFIG.coverCacheApi) CONFIG.coverCacheEndpoint = CONFIG.coverCacheApi;
-  CONFIG.keepWarmVideoAhead = Math.max(1, Number(CONFIG.keepWarmVideoAhead === undefined ? (CONFIG.preloadVideoAhead || 1) : CONFIG.keepWarmVideoAhead));
+  CONFIG.keepWarmVideoAhead = Math.max(0, Number(CONFIG.keepWarmVideoAhead === undefined ? 1 : CONFIG.keepWarmVideoAhead));
   CONFIG.keepWarmVideoBehind = Math.max(0, Number(CONFIG.keepWarmVideoBehind === undefined ? 0 : CONFIG.keepWarmVideoBehind));
   CONFIG.enableSegmentPrewarm = CONFIG.enableSegmentPrewarm === true || CONFIG.enableSegmentPrewarm === 'true';
-  CONFIG.segmentPrewarmMs = Math.max(120, Math.min(500, Number(CONFIG.segmentPrewarmMs || 220)));
-  CONFIG.playbackWatchdogMs = Math.max(2600, Math.min(9000, Number(CONFIG.playbackWatchdogMs || 5200)));
+  CONFIG.segmentPrewarmMs = Math.max(120, Math.min(500, Number(CONFIG.segmentPrewarmMs || 260)));
+  CONFIG.playbackWatchdogMs = Math.max(4000, Math.min(15000, Number(CONFIG.playbackWatchdogMs || 9000)));
 
   var TEXT = {
     loading: '发现加载中...',
@@ -253,7 +251,10 @@
     return String(me.uid || '') === String(author.uid || '') || String(me.userslug || '').toLowerCase() === String(author.userslug || '').toLowerCase();
   }
   function authorHref(author) { return author && author.userslug ? rel('/user/' + encodeURIComponent(author.userslug)) : '#'; }
-  function avatarSrc(author) { return author && author.picture ? author.picture : ''; }
+  function avatarSrc(author) {
+    author = author || {};
+    return author.picture || author.uploadedpicture || author.avatar || author.accountPicture || '';
+  }
   function canonicalTikTokUrl(url) {
     var m = String(url || '').replace(/&amp;/g, '&').match(RE.tiktokOne);
     return m ? 'https://www.tiktok.com/@' + m[1] + '/video/' + m[2] : String(url || '');
@@ -354,8 +355,8 @@
       passiveListeners: false,
       virtual: {
         enabled: true,
-        addSlidesBefore: 2,
-        addSlidesAfter: Math.max(5, CONFIG.preloadAhead + 2),
+        addSlidesBefore: 1,
+        addSlidesAfter: Math.max(3, CONFIG.preloadAhead + 1),
         slides: state.list.map(renderSlideHtml)
       },
       on: {
@@ -373,12 +374,12 @@
           safeJsonSet('pv-sound-muted', false);
           updateSoundUi();
           hideComposerFab();
-          var targetIndex = typeof swiper.activeIndex === 'number' ? swiper.activeIndex : state.index;
+          // 关键修复：滑动开始时立即暂停上一条，但不要 prime 新视频
+          // 避免上一条和新视频同时争抢带宽
           var previousIndex = typeof swiper.previousIndex === 'number' ? swiper.previousIndex : state.index;
-          state.index = targetIndex;
-          primeSlideForPlayback(targetIndex);
-          warmVideoWindow(targetIndex);
+          var targetIndex = typeof swiper.activeIndex === 'number' ? swiper.activeIndex : state.index;
           if (previousIndex !== targetIndex) pauseSlide(previousIndex, false);
+          state.index = targetIndex;
         },
         slideChange: function (swiper) {
           state.index = swiper.activeIndex || 0;
@@ -401,6 +402,7 @@
   }
   function afterVirtualUpdate() {
     if (!state.root) return;
+
     $$('.pv-slide-item', state.root).forEach(function (slide) {
       var index = Number(slide.dataset.index || -1);
       slide.classList.toggle('is-active', index === state.index);
@@ -497,6 +499,7 @@
   function initImageSwipers() {
     if (!window.Swiper) return;
     var live = new Set();
+
     $$('.pv-image-swiper', state.root).forEach(function (el) {
       var idx = Number(el.dataset.index || -1);
       live.add(idx);
@@ -553,8 +556,8 @@
     return 'pv:' + String(item.tid || item.pid || index) + ':' + String(videoId || '');
   }
   function isWarmIndex(index) {
-    var ahead = Math.max(1, Number(CONFIG.keepWarmVideoAhead || CONFIG.preloadVideoAhead || 2));
-    var behind = Math.max(0, Number(CONFIG.keepWarmVideoBehind || 1));
+    var ahead = Math.max(0, Number(CONFIG.keepWarmVideoAhead || 0));
+    var behind = Math.max(0, Number(CONFIG.keepWarmVideoBehind || 0));
     return index >= state.index - behind && index <= state.index + ahead;
   }
   function isCurrentPlayer(player) {
@@ -604,7 +607,8 @@
       prewarmStarted: false,
       pauseRetryTimer: 0,
       watchdogTimer: 0,
-      retryReloadedAt: 0
+      retryReloadedAt: 0,
+      reloadCount: 0
     };
     state.players.set(key, player);
     var cachedCover = getCachedCoverUrl(item);
@@ -616,12 +620,6 @@
       });
     }
     return player;
-  }
-  function prepareSlide(index, autoplay) {
-    if (index < 0 || index >= state.list.length) return null;
-    var item = state.list[index];
-    if (!item || !(item.tiktoks && item.tiktoks[0])) return null;
-    return ensureTikTokPlayer(index, !!autoplay);
   }
   function tryPlayPlayer(player, unmute) {
     if (!player || !player.iframe || player.iframe.src === 'about:blank') return;
@@ -645,10 +643,15 @@
       var slide = findSlide(player.index);
       if (slide) slide.classList.add('is-loading');
 
-      // TikTok iframes occasionally stay in loading/buffering forever on weak networks or low-memory phones.
-      // A soft src refresh is safer than keeping the dead iframe; throttle it to avoid reload loops.
-      if (!player.retryReloadedAt || now - player.retryReloadedAt > 9000) {
+      // 关键修复：先尝试用 play 唤醒（很多时候 TikTok 只是没收到指令）
+      // 只有在多次唤醒都无效后才走重载 src 的重路径，避免反复抖动加剧卡顿
+      tryPlayPlayer(player, !!state.soundUnlocked);
+
+      // 如果是真的卡死（已经尝试过多次唤醒），才考虑重载
+      var canReload = (!player.retryReloadedAt || now - player.retryReloadedAt > 15000) && (player.reloadCount || 0) < 2;
+      if (canReload && player.status === 'loading' && player.ready === false) {
         player.retryReloadedAt = now;
+        player.reloadCount = (player.reloadCount || 0) + 1;
         player.ready = false;
         player.status = 'loading';
         try {
@@ -658,14 +661,9 @@
           });
         } catch (e) {}
       }
-      tryPlayPlayer(player, !!state.soundUnlocked);
-      setTimeout(function () {
-        if (player && player.index === state.index && player.wantPlay && player.status !== 'playing') {
-          tryPlayPlayer(player, !!state.soundUnlocked);
-        }
-      }, 880);
-      schedulePlaybackWatchdog(player, CONFIG.playbackWatchdogMs + 1200, reason || 'retry');
-    }, Math.max(1200, Number(delay || CONFIG.playbackWatchdogMs)));
+      // 重新调度下次检查，间隔更长
+      schedulePlaybackWatchdog(player, CONFIG.playbackWatchdogMs + 2000, reason || 'retry');
+    }, Math.max(2000, Number(delay || CONFIG.playbackWatchdogMs)));
   }
   function currentPlayer() {
     var item = state.list[state.index];
@@ -675,6 +673,7 @@
   function updateSoundUi() {
     if (!state.root) return;
     var on = soundIsOn();
+
     $$('.pv-sound-btn', state.root).forEach(function (btn) {
       btn.classList.toggle('is-active', on);
       var icon = $('.pv-action-icon', btn);
@@ -704,70 +703,35 @@
     }
     setSoundMuted(!state.soundMuted);
   }
-  function schedulePrewarm(player) {
-    if (!player || !player.iframe || isCurrentPlayer(player)) return;
-    sendToPlayer(player.iframe, 'mute');
-    if (!CONFIG.enableSegmentPrewarm || player.index !== state.index + 1) {
-      if (player.ready && !player.wantPlay) {
-        setTimeout(function () {
-          if (!player || !player.iframe || isCurrentPlayer(player) || player.wantPlay) return;
-          sendToPlayer(player.iframe, 'mute');
-          sendToPlayer(player.iframe, 'pause');
-          player.status = 'paused';
-        }, 120);
-      }
-      return;
-    }
-    if (!player.ready || player.prewarmStarted) return;
-    player.prewarmStarted = true;
-    tryPlayPlayer(player, false);
-    setTimeout(function () {
-      if (!player || !player.iframe || isCurrentPlayer(player) || player.wantPlay) return;
-      sendToPlayer(player.iframe, 'mute');
-      sendToPlayer(player.iframe, 'pause');
-      player.status = 'paused';
-    }, CONFIG.segmentPrewarmMs);
-  }
-  function forcePlayerAutoplay(player) {
-    if (!player || !player.iframe) return null;
-    player.wantPlay = true;
-    try { player.iframe.loading = 'eager'; player.iframe.fetchPriority = 'high'; } catch (e) {}
-    tryPlayPlayer(player, !!state.soundUnlocked);
-    return player;
-  }
-  function primeSlideForPlayback(index) {
-    var player = ensureTikTokPlayer(index, true);
-    if (!player) return null;
-    player.wantPlay = true;
-    tryPlayPlayer(player, !!state.soundUnlocked);
-    return player;
-  }
 
   function warmVideoWindow(fromIndex) {
     if (fromIndex < 0 || fromIndex >= state.list.length) return;
+    // 关键修复：只 ensure 当前视频。下一个视频不主动创建 iframe，
+    // 等当前视频已经在 playing 状态后再考虑预热（lazy warm）
     ensureTikTokPlayer(fromIndex, fromIndex === state.index);
 
-    var behind = Math.max(0, Number(CONFIG.keepWarmVideoBehind || 1));
-    for (var b = fromIndex - 1; b >= Math.max(0, fromIndex - behind); b -= 1) {
-      var prev = state.list[b];
-      if (prev && prev.tiktoks && prev.tiktoks[0]) {
-        var prevPlayer = ensureTikTokPlayer(b, false);
-        if (prevPlayer) {
-          sendToPlayer(prevPlayer.iframe, 'mute');
-          sendToPlayer(prevPlayer.iframe, 'pause');
+    // 仅在当前视频已经在播放时，才预创建下一个视频的 iframe（但不 play）
+    var curPlayer = currentPlayer();
+    if (curPlayer && curPlayer.status === 'playing' && fromIndex === state.index) {
+      var nextIdx = fromIndex + 1;
+      var ahead = Math.max(0, Number(CONFIG.keepWarmVideoAhead || 0));
+      if (ahead > 0 && nextIdx < state.list.length) {
+        var nextItem = state.list[nextIdx];
+        if (nextItem && nextItem.tiktoks && nextItem.tiktoks[0]) {
+          if (curPlayer.warmScheduledFor === nextIdx) return;
+          curPlayer.warmScheduledFor = nextIdx;
+          // 延迟创建下一个 iframe，让当前视频先稳定播放
+          setTimeout(function () {
+            if (state.index !== fromIndex) return;
+            var p = currentPlayer();
+            if (!p || p.status !== 'playing') return;
+            var next = ensureTikTokPlayer(nextIdx, false);
+            if (next && next.iframe) {
+              sendToPlayer(next.iframe, 'mute');
+              sendToPlayer(next.iframe, 'pause');
+            }
+          }, 900);
         }
-      }
-    }
-
-    var warmed = 0;
-    var maxAhead = Math.max(1, Number(CONFIG.keepWarmVideoAhead || CONFIG.preloadVideoAhead || 2));
-    var maxScan = Math.min(state.list.length - 1, fromIndex + Math.max(8, CONFIG.preloadAhead + 4));
-    for (var i = fromIndex + 1; i <= maxScan && warmed < maxAhead; i += 1) {
-      var item = state.list[i];
-      if (item && item.tiktoks && item.tiktoks[0]) {
-        var p = ensureTikTokPlayer(i, false);
-        schedulePrewarm(p);
-        warmed += 1;
       }
     }
   }
@@ -775,16 +739,16 @@
     if (!iframe || !iframe.contentWindow || iframe.src === 'about:blank') return;
     var msg = { 'x-tiktok-player': true, type: type };
     if (arguments.length >= 3) msg.value = value;
-    iframe.contentWindow.postMessage(msg, 'https://www.tiktok.com');
+    try { iframe.contentWindow.postMessage(msg, 'https://www.tiktok.com'); } catch (e) {}
   }
   function hardStopPlayer(player, force) {
     if (!player || !player.iframe) return;
     sendToPlayer(player.iframe, 'pause');
-    setTimeout(function () { sendToPlayer(player.iframe, 'pause'); }, 40);
     var stop = function () {
       if (!player || !player.iframe) return;
       if (!force && (player.index === state.index || isWarmIndex(player.index))) return;
       clearPlaybackWatchdog(player);
+      if (player.pauseRetryTimer) { clearTimeout(player.pauseRetryTimer); player.pauseRetryTimer = 0; }
       try {
         player.iframe.src = 'about:blank';
         if (player.iframe.parentNode) player.iframe.remove();
@@ -795,7 +759,7 @@
       state.players.delete(player.key);
     };
     if (force) stop();
-    else setTimeout(stop, 650);
+    else setTimeout(stop, 350);
   }
   function playSlide(index, userGesture) {
     var item = state.list[index];
@@ -826,9 +790,8 @@
       tryPlayPlayer(player, !!state.soundUnlocked);
     }
     requestPlay();
-    setTimeout(requestPlay, 420);
-    setTimeout(requestPlay, 1200);
-    setTimeout(function () { if (stillWantsPlay() && player.status !== 'playing') markSlidePlaying(index); }, 1900);
+    // 关键修复：减少重试次数，只在 800ms 后试一次，避免与 watchdog 叠加
+    setTimeout(requestPlay, 800);
     schedulePlaybackWatchdog(player, CONFIG.playbackWatchdogMs, 'play');
     warmVideoWindow(index);
   }
@@ -844,7 +807,6 @@
       if (p.iframe) {
         sendToPlayer(p.iframe, 'mute');
         sendToPlayer(p.iframe, 'pause');
-        setTimeout(function () { sendToPlayer(p.iframe, 'pause'); }, 80);
       }
       if (force || (!manual && !isWarmIndex(p.index))) hardStopPlayer(p, !!force);
     });
@@ -864,20 +826,17 @@
       var warm = isWarmIndex(p.index);
       if (p.iframe) {
         sendToPlayer(p.iframe, 'mute');
-        if (warm && p.index > state.index) {
-          schedulePrewarm(p);
-        } else {
-          sendToPlayer(p.iframe, 'pause');
-        }
+        sendToPlayer(p.iframe, 'pause');
       }
-      if (!warm || Math.abs(p.index - state.index) > CONFIG.preloadAhead) hardStopPlayer(p, true);
+      // 关键修复：非 warm 范围内的 iframe 立即释放
+      if (!warm) hardStopPlayer(p, true);
       var slide = findSlide(p.index);
       if (slide) slide.classList.remove('is-playing', 'is-loading', 'is-paused');
     });
   }
   function prunePlayers() {
-    var ahead = Math.max(1, Number(CONFIG.keepWarmVideoAhead || CONFIG.preloadVideoAhead || 2));
-    var behind = Math.max(0, Number(CONFIG.keepWarmVideoBehind || 1));
+    var ahead = Math.max(0, Number(CONFIG.keepWarmVideoAhead || 0));
+    var behind = Math.max(0, Number(CONFIG.keepWarmVideoBehind || 0));
     state.players.forEach(function (p) {
       if (p.index >= state.index - behind && p.index <= state.index + ahead) return;
       hardStopPlayer(p, true);
@@ -885,6 +844,7 @@
   }
   function activateCurrent() {
     state.index = state.swiper ? state.swiper.activeIndex : state.index;
+
     $$('.pv-slide-item', state.root).forEach(function (slide) {
       var idx = Number(slide.dataset.index || -1);
       slide.classList.toggle('is-active', idx === state.index);
@@ -924,8 +884,6 @@
         player.ready = true;
         if (player.index === state.index && player.wantPlay && state.manualPausedKey !== player.key) {
           tryPlayPlayer(player, !!state.soundUnlocked);
-        } else if (isWarmIndex(player.index)) {
-          schedulePrewarm(player);
         }
         return;
       }
@@ -933,12 +891,18 @@
         var value = Number(data.value); var word = String(data.value || '').toLowerCase();
         if (value === 1 || word === 'playing') {
           player.status = 'playing';
+          player.reloadCount = 0;
           clearPlaybackWatchdog(player);
           if (player.index === state.index) {
             if (state.hasInteracted || state.soundUnlocked) safeJsonSet('pv-sound-unlocked', true);
             markSlidePlaying(player.index);
+            // 当前视频开始稳定播放后，再触发下一个的预热
+            setTimeout(function () { warmVideoWindow(state.index); }, 600);
           } else {
-            if (!isWarmIndex(player.index)) sendToPlayer(player.iframe, 'pause');
+            // 非当前播放的视频应该被暂停
+            if (!isWarmIndex(player.index) || player.index !== state.index) {
+              sendToPlayer(player.iframe, 'pause');
+            }
           }
         } else if (value === 2 || value === 0 || word === 'paused' || word === 'ended') {
           player.status = 'paused';
@@ -951,13 +915,14 @@
                 tryPlayPlayer(player, !!state.soundUnlocked);
                 schedulePlaybackWatchdog(player, CONFIG.playbackWatchdogMs, 'paused');
               }
-            }, 520);
+            }, 600);
           }
         } else if (value === 3 || word === 'buffering') {
           var s2 = findSlide(player.index);
           if (s2 && player.index === state.index && player.wantPlay) {
             s2.classList.add('is-loading');
-            schedulePlaybackWatchdog(player, Math.max(2600, CONFIG.playbackWatchdogMs - 1200), 'buffering');
+            // buffering 时只显示 loading，不主动重载，给网络更多时间
+            schedulePlaybackWatchdog(player, CONFIG.playbackWatchdogMs, 'buffering');
           }
         }
       }
@@ -1048,8 +1013,21 @@
   }
   function followStoreKey() { return 'pv-follow-state:' + localUserSuffix(); }
   function followStore() { return safeJsonGet(followStoreKey(), {}); }
-  function readFollow(author) { if (!author) return false; var s = followStore(); if (author.uid && s['uid:' + author.uid] !== undefined) return !!s['uid:' + author.uid]; if (author.userslug && s['slug:' + String(author.userslug).toLowerCase()] !== undefined) return !!s['slug:' + String(author.userslug).toLowerCase()]; return false; }
-  function writeFollow(author, following) { var s = followStore(); if (author.uid) s['uid:' + author.uid] = !!following; if (author.userslug) s['slug:' + String(author.userslug).toLowerCase()] = !!following; safeJsonSet(followStoreKey(), s); }
+  function readFollow(author) {
+    if (!author) return false;
+    var s = followStore();
+    var uid = authorUid(author);
+    if (uid && s['uid:' + uid] !== undefined) return !!s['uid:' + uid];
+    if (author.userslug && s['slug:' + String(author.userslug).toLowerCase()] !== undefined) return !!s['slug:' + String(author.userslug).toLowerCase()];
+    return false;
+  }
+  function writeFollow(author, following) {
+    var s = followStore();
+    var uid = authorUid(author);
+    if (uid) s['uid:' + uid] = !!following;
+    if (author && author.userslug) s['slug:' + String(author.userslug).toLowerCase()] = !!following;
+    safeJsonSet(followStoreKey(), s);
+  }
   function updateFollowUi(slide, following) { var btn = $('.pv-follow-plus', slide); if (!btn) return; btn.classList.toggle('is-following', !!following); btn.textContent = following ? '✓' : '+'; }
   function authorUid(author) {
     author = author || {};
@@ -1058,6 +1036,7 @@
   function updateFollowUiForAuthor(author, following) {
     var uid = authorUid(author);
     var slug = String(author && author.userslug || '').toLowerCase();
+
     $$('.pv-slide-item', state.root).forEach(function (slide) {
       var idx = Number(slide.dataset.index || -1);
       var item = state.list[idx] || {};
@@ -1194,6 +1173,7 @@
     $('[name="sourceLang"]', panel).value = s.sourceLang || 'auto'; $('[name="targetLang"]', panel).value = s.targetLang || 'zh'; $('[name="provider"]', panel).value = s.provider || 'google';
     $('[name="aiEndpoint"]', panel).value = s.aiEndpoint || ''; $('[name="aiModel"]', panel).value = s.aiModel || ''; $('[name="aiApiKey"]', panel).value = s.aiApiKey || ''; $('[name="aiPrompt"]', panel).value = s.aiPrompt || DEFAULT_AI_PROMPT;
     panel.classList.toggle('is-ai', s.provider === 'ai');
+
     $$('.pv-provider-tab', panel).forEach(function (t) { t.classList.toggle('is-active', (t.dataset.provider || 'google') === (s.provider || 'google')); });
     panel.classList.add('is-open'); backdrop.classList.add('is-open');
   }
@@ -1212,6 +1192,7 @@
   function toggleVoiceCard(card) {
     if (!card) return; var src = card.dataset.src; if (!src) return;
     var audio = card._pvAudio || new Audio(src); card._pvAudio = audio; audio.preload = 'metadata';
+
     $$('.pv-voice-card.playing', state.root).forEach(function (node) { if (node !== card && node._pvAudio) { node._pvAudio.pause(); node.classList.remove('playing'); $('.pv-voice-play', node).textContent = '▶'; } });
     audio.onloadedmetadata = function () { if (audio.duration && isFinite(audio.duration)) $('.pv-voice-time', card).textContent = formatDuration(audio.duration); };
     audio.ontimeupdate = function () { if (!audio.paused) $('.pv-voice-time', card).textContent = formatDuration(audio.currentTime); };
@@ -1718,10 +1699,12 @@
       });
       closeTranslateSettings();
     });
+
     $$('.pv-provider-tab', state.root).forEach(function (tab) {
       tab.addEventListener('click', function () {
         var p = $('.pv-translate-panel', state.root);
         $('[name="provider"]', p).value = tab.dataset.provider || 'google';
+
         $$('.pv-provider-tab', p).forEach(function (t) { t.classList.toggle('is-active', t === tab); });
         p.classList.toggle('is-ai', tab.dataset.provider === 'ai');
       });
@@ -1805,8 +1788,7 @@
 
   function showEmpty(text) { var old = $('.pv-empty-page', state.root); if (old) old.remove(); var div = document.createElement('div'); div.className = 'pv-empty-page'; div.textContent = text || TEXT.empty; state.root.appendChild(div); }
   function injectRuntimeFixStyles() {
-    // CSS is delivered as peipe-video-discover-sea-final.css.
-    // Keep this hook as a no-op to avoid stacking duplicate runtime override patches.
+    // CSS 已由独立样式表交付，保留空函数以避免覆盖样式叠加
   }
 
   function init() {
