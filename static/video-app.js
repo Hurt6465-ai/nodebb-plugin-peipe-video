@@ -1,8 +1,8 @@
-/* Peipe /video mobile discover page v7 optimized final
-   - Supports backend cached TikTok coverUrl from feed: item.coverUrl or item.tiktoks[0].coverUrl
-   - Keeps frontend TikTok oEmbed + gradient fallback, so black screen is avoided when cover is missing
-   - Current + next TikTok iframes are warmed; previous iframes are hard-stopped to prevent audio leak
-   - Comment drawer auto-fits content height; single-layer input; light translate panel; glass compose panel
+/* Peipe /video mobile discover page v7 optimized final - compressed images build
+   - Adds cost-effective image compression for compose images: 1080px / ~90KB target, WebP preferred
+   - HEIC/HEIF are converted when the browser can decode them; if conversion fails, upload is rejected
+   - GIF/SVG are rejected for compose image uploads to avoid large/unsafe originals
+   - TikTok playback/comment/translate behavior kept from v7
 */
 (function () {
   'use strict';
@@ -10,7 +10,23 @@
   if (window.__peipeVideoDiscoverV7) return;
   window.__peipeVideoDiscoverV7 = true;
 
-  var CONFIG = Object.assign({
+  function deepMerge(target) {
+    target = target || {};
+    for (var i = 1; i < arguments.length; i += 1) {
+      var src = arguments[i] || {};
+      Object.keys(src).forEach(function (key) {
+        var val = src[key];
+        if (val && typeof val === 'object' && !Array.isArray(val) && !(val instanceof File) && !(val instanceof Blob)) {
+          target[key] = deepMerge({}, target[key] || {}, val);
+        } else if (val !== undefined) {
+          target[key] = val;
+        }
+      });
+    }
+    return target;
+  }
+
+  var CONFIG = deepMerge({
     cid: 6,
     pageSize: 12,
     preloadAhead: 4,
@@ -21,6 +37,14 @@
     segmentPrewarmMs: 220,
     coverCacheEndpoint: '/api/v3/plugins/peipe-video/cover',
     imageMax: 4,
+    imageConfig: {
+      maxSide: 1080,
+      maxSizeMB: 0.09,
+      quality: 0.58,
+      minCompressBytes: 70 * 1024,
+      useWebp: true,
+      qualities: [0.58, 0.50, 0.44, 0.38, 0.32, 0.26, 0.22]
+    },
     coverCacheMs: 7 * 24 * 60 * 60 * 1000,
     translateCacheMs: 3 * 24 * 60 * 60 * 1000,
     doubleTapMs: 280,
@@ -47,7 +71,11 @@
     translateInput: '翻译输入',
     send: '发布',
     imageOnly: '请选择图片',
+    imageUnsupported: '不支持 GIF/SVG 原图上传，请换 JPG/PNG/WebP 图片',
+    imageConvertFail: '此图片格式浏览器无法转换，请换 JPG/PNG/WebP 图片',
+    imageCompressFail: '图片处理失败，请换一张图片',
     uploadImage: '上传图片',
+    compressing: '压缩中...',
     enterSomething: '请输入内容、TikTok 链接或图片',
     comments: '评论',
     commentPlaceholder: '说点什么...',
@@ -539,8 +567,6 @@
     var iframe = document.createElement('iframe');
     var isCurrent = index === state.index;
     iframe.className = 'pv-tiktok-frame';
-    // Always create as autoplay=1. Warm slides are muted, which lets mobile browsers preload more reliably.
-    // Do not later change iframe.src just to switch autoplay; that discards the preload.
     iframe.src = buildPlayerUrl(tk.videoId, {
       autoplay: true,
       muted: !isCurrent || !state.soundUnlocked || state.soundMuted
@@ -626,11 +652,7 @@
   }
   function schedulePrewarm(player) {
     if (!player || !player.iframe || isCurrentPlayer(player)) return;
-
-    // TikTok iframes are heavy. Keep only the immediate next iframe warm by default.
-    // Segment prewarm is optional because muted hidden playback can make low-end phones stutter.
     sendToPlayer(player.iframe, 'mute');
-
     if (!CONFIG.enableSegmentPrewarm || player.index !== state.index + 1) {
       if (player.ready && !player.wantPlay) {
         setTimeout(function () {
@@ -642,7 +664,6 @@
       }
       return;
     }
-
     if (!player.ready || player.prewarmStarted) return;
     player.prewarmStarted = true;
     tryPlayPlayer(player, false);
@@ -654,8 +675,6 @@
     }, CONFIG.segmentPrewarmMs);
   }
   function forcePlayerAutoplay(player) {
-    // Kept for backward calls, but intentionally does not change iframe.src.
-    // Reassigning src was the main reason preloaded TikTok iframes showed loading again.
     if (!player || !player.iframe) return null;
     player.wantPlay = true;
     try { player.iframe.loading = 'eager'; player.iframe.fetchPriority = 'high'; } catch (e) {}
@@ -851,7 +870,6 @@
             if (state.hasInteracted || state.soundUnlocked) safeJsonSet('pv-sound-unlocked', true);
             markSlidePlaying(player.index);
           } else {
-            // Warm iframe may briefly play muted to pull the first segment. Never let it affect current slide.
             if (!isWarmIndex(player.index)) sendToPlayer(player.iframe, 'pause');
           }
         } else if (value === 2 || value === 0 || word === 'paused' || word === 'ended') {
@@ -1221,34 +1239,193 @@
   function openCompose() { pauseSlide(state.index); $('.pv-drawer-backdrop', state.root).classList.add('is-open'); $('.pv-compose-panel', state.root).classList.add('is-open'); hideComposerFab(); }
   function closeCompose() { $('.pv-compose-panel', state.root).classList.remove('is-open'); $('.pv-drawer-backdrop', state.root).classList.remove('is-open'); }
   function resetCompose() { var p = $('.pv-compose-panel', state.root); $('textarea', p).value = ''; setPendingImages([]); $('.pv-meta', p).textContent = ''; }
-  function canCanvasEncode(type) { return new Promise(function (resolve) { try { var c = document.createElement('canvas'); c.width = c.height = 1; c.toBlob(function (b) { resolve(!!b && b.type === type); }, type, 0.8); } catch (e) { resolve(false); } }); }
-  function compressImageFile(file) {
-    if (!file || !/^image\//i.test(file.type) || /gif|svg/i.test(file.type) || file.size < 128 * 1024) return Promise.resolve(file);
+
+  function fileExt(file) {
+    var name = String(file && file.name || '').toLowerCase();
+    var m = name.match(/\.([a-z0-9]+)$/);
+    return m ? m[1] : '';
+  }
+  function mimeFromFile(file) {
+    var type = String(file && file.type || '').toLowerCase();
+    if (/^image\//.test(type)) return type;
+    var ext = fileExt(file);
+    if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+    if (ext === 'png') return 'image/png';
+    if (ext === 'webp') return 'image/webp';
+    if (ext === 'gif') return 'image/gif';
+    if (ext === 'svg') return 'image/svg+xml';
+    if (ext === 'heic') return 'image/heic';
+    if (ext === 'heif') return 'image/heif';
+    return type || '';
+  }
+  function isImageFile(file) {
+    if (!file) return false;
+    var type = String(file.type || '').toLowerCase();
+    var ext = fileExt(file);
+    if (/^(jpg|jpeg|png|webp|gif|svg|heic|heif)$/i.test(ext)) return true;
+    return /^image\//.test(type);
+  }
+  function isHeicFile(file) {
+    var type = mimeFromFile(file);
+    var ext = fileExt(file);
+    return /heic|heif/i.test(type) || /^(heic|heif)$/i.test(ext);
+  }
+  function imageConfig(opts) {
+    return deepMerge({}, {
+      maxSide: 1080,
+      maxSizeMB: 0.09,
+      quality: 0.58,
+      minCompressBytes: 70 * 1024,
+      useWebp: true,
+      qualities: [0.58, 0.50, 0.44, 0.38, 0.32, 0.26, 0.22]
+    }, CONFIG.imageConfig || {}, opts || {});
+  }
+  function imageTargetBytes(cfg) {
+    return Math.max(30 * 1024, Math.round(Number(cfg.maxSizeMB || 0.09) * 1024 * 1024));
+  }
+  function extForMime(type) {
+    type = String(type || '').toLowerCase();
+    if (type === 'image/webp') return '.webp';
+    if (type === 'image/png') return '.png';
+    return '.jpg';
+  }
+  function canCanvasEncode(type) {
     return new Promise(function (resolve) {
-      var img = new Image(); var url = URL.createObjectURL(file);
-      img.onload = function () {
-        URL.revokeObjectURL(url);
-        var maxSide = 1440; var scale = Math.min(1, maxSide / Math.max(img.naturalWidth || img.width, img.naturalHeight || img.height));
-        var canvas = document.createElement('canvas'); canvas.width = Math.max(1, Math.round((img.naturalWidth || img.width) * scale)); canvas.height = Math.max(1, Math.round((img.naturalHeight || img.height) * scale));
-        var ctx = canvas.getContext('2d'); if (!ctx || !canvas.toBlob) return resolve(file);
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        canCanvasEncode('image/webp').then(function (webp) {
-          var type = webp ? 'image/webp' : 'image/jpeg';
-          canvas.toBlob(function (blob) {
-            if (!blob || blob.size >= file.size * 0.95) return resolve(file);
-            var name = String(file.name || ('image-' + Date.now())).replace(/\.[^.]+$/, '') + (type === 'image/webp' ? '.webp' : '.jpg');
-            resolve(new File([blob], name, { type: type, lastModified: Date.now() }));
-          }, type, 0.62);
-        });
-      };
-      img.onerror = function () { URL.revokeObjectURL(url); resolve(file); };
-      img.src = url;
+      try {
+        var c = document.createElement('canvas');
+        c.width = 1;
+        c.height = 1;
+        if (!c.toBlob) return resolve(false);
+        c.toBlob(function (b) { resolve(!!b && b.type === type); }, type, 0.8);
+      } catch (e) { resolve(false); }
     });
   }
-  function compressImageFiles(files) { return Promise.all((files || []).map(compressImageFile)); }
+  function loadImageFromFile(file) {
+    return new Promise(function (resolve, reject) {
+      if (!file) return reject(new Error('empty file'));
+      if (window.createImageBitmap) {
+        window.createImageBitmap(file).then(function (bitmap) {
+          resolve({
+            width: bitmap.width,
+            height: bitmap.height,
+            draw: function (ctx, w, h) { ctx.drawImage(bitmap, 0, 0, w, h); },
+            close: function () { try { bitmap.close && bitmap.close(); } catch (e) {} }
+          });
+        }).catch(function () {
+          var img = new Image();
+          var url = URL.createObjectURL(file);
+          img.onload = function () {
+            URL.revokeObjectURL(url);
+            resolve({
+              width: img.naturalWidth || img.width,
+              height: img.naturalHeight || img.height,
+              draw: function (ctx, w, h) { ctx.drawImage(img, 0, 0, w, h); },
+              close: function () {}
+            });
+          };
+          img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('decode failed')); };
+          img.src = url;
+        });
+        return;
+      }
+      var image = new Image();
+      var objectUrl = URL.createObjectURL(file);
+      image.onload = function () {
+        URL.revokeObjectURL(objectUrl);
+        resolve({
+          width: image.naturalWidth || image.width,
+          height: image.naturalHeight || image.height,
+          draw: function (ctx, w, h) { ctx.drawImage(image, 0, 0, w, h); },
+          close: function () {}
+        });
+      };
+      image.onerror = function () { URL.revokeObjectURL(objectUrl); reject(new Error('decode failed')); };
+      image.src = objectUrl;
+    });
+  }
+  function canvasToBlob(canvas, type, quality) {
+    return new Promise(function (resolve) {
+      canvas.toBlob(function (blob) { resolve(blob); }, type, quality);
+    });
+  }
+  function makeCompressedFile(original, blob, type) {
+    if (!blob || !blob.size) return original;
+    var base = String(original && original.name || ('image-' + Date.now())).replace(/\.[^.]+$/, '');
+    try { return new File([blob], base + extForMime(type), { type: type, lastModified: Date.now() }); }
+    catch (e) { blob.name = base + extForMime(type); return blob; }
+  }
+  function compressImageFile(file) {
+    if (!file || file.size === 0) return Promise.reject(new Error(TEXT.imageOnly));
+    if (!isImageFile(file)) return Promise.reject(new Error(TEXT.imageOnly));
+
+    var type = mimeFromFile(file);
+    var ext = fileExt(file);
+    var heic = isHeicFile(file);
+    if (/gif|svg/i.test(type) || /^(gif|svg)$/i.test(ext)) return Promise.reject(new Error(TEXT.imageUnsupported));
+
+    var cfg = imageConfig();
+    var size = Number(file.size || 0);
+    if (!heic && size > 0 && size < Number(cfg.minCompressBytes || 0)) return Promise.resolve(file);
+
+    return canCanvasEncode('image/webp').then(function (webp) {
+      var targetType = cfg.useWebp && webp ? 'image/webp' : 'image/jpeg';
+      return loadImageFromFile(file).then(function (img) {
+        var w = img.width || 1;
+        var h = img.height || 1;
+        var maxSide = Number(cfg.maxSide || 1080);
+        var scale = Math.min(1, maxSide / Math.max(w, h));
+        var canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(w * scale));
+        canvas.height = Math.max(1, Math.round(h * scale));
+        var ctx = canvas.getContext('2d');
+        if (!ctx || !canvas.toBlob) throw new Error(TEXT.imageConvertFail);
+        img.draw(ctx, canvas.width, canvas.height);
+        if (img.close) img.close();
+
+        var targetBytes = imageTargetBytes(cfg);
+        var qualities = Array.isArray(cfg.qualities) && cfg.qualities.length ? cfg.qualities : [cfg.quality || 0.58, 0.50, 0.44, 0.38, 0.32, 0.26, 0.22];
+        var best = null;
+        var chain = Promise.resolve();
+        qualities.forEach(function (q) {
+          chain = chain.then(function () {
+            if (best && best.size <= targetBytes) return best;
+            return canvasToBlob(canvas, targetType, Number(q)).then(function (blob) {
+              if (blob && blob.size) best = blob;
+              return best;
+            });
+          });
+        });
+        return chain.then(function () {
+          if (!best || !best.size) throw new Error(TEXT.imageConvertFail);
+          if (!heic && size && best.size >= size * 0.98) return file;
+          return makeCompressedFile(file, best, targetType);
+        });
+      });
+    }).catch(function (err) {
+      console.warn('[peipe-video] image compression/convert failed', err);
+      if (heic) throw new Error(TEXT.imageConvertFail);
+      throw new Error((err && err.message) || TEXT.imageCompressFail);
+    });
+  }
+  function compressImageFiles(files) {
+    files = Array.from(files || []).filter(function (file) { return file && file.size !== 0; }).slice(0, CONFIG.imageMax);
+    if (!files.length) return Promise.reject(new Error(TEXT.imageOnly));
+    var bad = files.find(function (file) { return !isImageFile(file); });
+    if (bad) return Promise.reject(new Error(TEXT.imageOnly));
+    var p = Promise.resolve([]);
+    files.forEach(function (file) {
+      p = p.then(function (out) {
+        return compressImageFile(file).then(function (nextFile) {
+          out.push(nextFile);
+          return out;
+        });
+      });
+    });
+    return p;
+  }
   function setPendingImages(files) {
-    state.compose.imageUrls.forEach(function (url) { URL.revokeObjectURL(url); });
-    var list = Array.from(files || []).filter(function (f) { return /^image\//i.test(f.type); }).slice(0, CONFIG.imageMax);
+    state.compose.imageUrls.forEach(function (url) { try { URL.revokeObjectURL(url); } catch (e) {} });
+    var list = Array.from(files || []).filter(function (f) { return f && isImageFile(f); }).slice(0, CONFIG.imageMax);
     state.compose.imageFiles = list; state.compose.imageUrls = list.map(function (f) { return URL.createObjectURL(f); });
     $('.pv-preview-images', state.root).innerHTML = state.compose.imageUrls.map(function (u) { return '<img src="' + u + '" alt="preview">'; }).join('');
   }
@@ -1345,7 +1522,7 @@
         '<div class="pv-swiper swiper"><div class="swiper-wrapper"></div></div>' +
         '<button type="button" class="pv-compose-fab">+</button>' +
         '<div class="pv-drawer-backdrop"></div><div class="pv-modal-backdrop"></div>' +
-        '<section class="pv-compose-panel" role="dialog"><div class="pv-panel-head"><div class="pv-panel-title">' + TEXT.publish + '</div><button type="button" class="pv-close pv-compose-close">×</button></div><textarea class="pv-compose-textarea" placeholder="' + TEXT.placeholder + '"></textarea><div class="pv-preview-images"></div><div class="pv-compose-tools"><input type="file" class="pv-image-input" accept="image/*" multiple hidden><button type="button" class="pv-tool pv-image-btn">' + TEXT.chooseImage + '</button><button type="button" class="pv-tool pv-compose-translate">' + iconTranslate() + ' ' + TEXT.translate + '</button><button type="button" class="pv-primary pv-compose-submit">' + TEXT.send + '</button></div><div class="pv-meta"></div></section>' +
+        '<section class="pv-compose-panel" role="dialog"><div class="pv-panel-head"><div class="pv-panel-title">' + TEXT.publish + '</div><button type="button" class="pv-close pv-compose-close">×</button></div><textarea class="pv-compose-textarea" placeholder="' + TEXT.placeholder + '"></textarea><div class="pv-preview-images"></div><div class="pv-compose-tools"><input type="file" class="pv-image-input" accept="image/*,.jpg,.jpeg,.png,.webp,.heic,.heif" multiple hidden><button type="button" class="pv-tool pv-image-btn">' + TEXT.chooseImage + '</button><button type="button" class="pv-tool pv-compose-translate">' + iconTranslate() + ' ' + TEXT.translate + '</button><button type="button" class="pv-primary pv-compose-submit">' + TEXT.send + '</button></div><div class="pv-meta"></div></section>' +
         '<section class="pv-comments-panel" role="dialog"><div class="pv-panel-grip"></div><div class="pv-panel-head pv-comments-drag"><div class="pv-panel-title pv-comments-title">' + TEXT.comments + '</div><button type="button" class="pv-close pv-comments-close">×</button></div><div class="pv-comments-list"></div><div class="pv-reply-bar"><span>' + TEXT.replyTo + ' </span><b class="pv-reply-name"></b><button type="button" class="pv-reply-cancel">×</button></div><div class="pv-comment-voice-preview"></div><div class="pv-comment-record-panel"><div class="pv-record-pulse"></div><div class="pv-record-bars"><i></i><i></i><i></i><i></i><i></i></div><span class="pv-record-time">00:00</span><span class="pv-record-tip">正在录音，点右侧按钮停止</span></div><div class="pv-comment-send-row"><div class="pv-comment-input-wrap"><button type="button" class="pv-comment-input-translate" aria-label="' + TEXT.translate + '" title="' + TEXT.translate + '">' + iconTranslate() + '</button><input class="pv-comment-input" placeholder="' + TEXT.commentPlaceholder + '"><button type="button" class="pv-comment-action-btn" aria-label="语音或发送">' + iconMic() + '</button></div></div></section>' +
         '<section class="pv-translate-panel" role="dialog"><div class="pv-panel-head"><div class="pv-panel-title">' + TEXT.translateSettings + '</div><button type="button" class="pv-close pv-translate-close">×</button></div><div class="pv-provider-tabs"><button type="button" class="pv-provider-tab" data-provider="google">' + TEXT.google + '</button><button type="button" class="pv-provider-tab" data-provider="ai">' + TEXT.ai + '</button><input type="hidden" name="provider" value="google"></div><div class="pv-lang-row"><label><span>' + TEXT.sourceLang + '</span><select name="sourceLang">' + langOptions(true) + '</select></label><span class="pv-lang-arrow">⇄</span><label><span>' + TEXT.targetLang + '</span><select name="targetLang">' + langOptions(false) + '</select></label></div><div class="pv-ai-settings"><label>' + TEXT.aiEndpoint + '<input name="aiEndpoint" placeholder="https://api.example.com/v1"></label><label>' + TEXT.aiModel + '<input name="aiModel" placeholder="gpt-4.1-mini / qwen / deepseek"></label><label>' + TEXT.aiApiKey + '<input name="aiApiKey" type="password" placeholder="API Key"></label><label>' + TEXT.aiPrompt + '<textarea name="aiPrompt" rows="4"></textarea></label></div><div class="pv-translate-actions"><button type="button" class="pv-primary pv-translate-save">' + TEXT.save + '</button></div></section>' +
         '<div class="pv-viewer"><div class="pv-viewer-swiper swiper"><div class="swiper-wrapper"></div><div class="pv-viewer-pagination"></div></div><button class="pv-viewer-close" aria-label="关闭">×</button></div>' +
@@ -1369,7 +1546,22 @@
     $('.pv-compose-close', state.root).addEventListener('click', closeCompose);
     $('.pv-drawer-backdrop', state.root).addEventListener('click', function () { closeCompose(); closeComments(); closeTranslateSettings(); });
     $('.pv-image-btn', state.root).addEventListener('click', function () { $('.pv-image-input', state.root).click(); });
-    $('.pv-image-input', state.root).addEventListener('change', function (e) { var files = Array.from(e.target.files || []).slice(0, CONFIG.imageMax); e.target.value = ''; if (files.find(function (f) { return !/^image\//i.test(f.type); })) return alertError(TEXT.imageOnly); compressImageFiles(files).then(setPendingImages); });
+    $('.pv-image-input', state.root).addEventListener('change', function (e) {
+      var files = Array.from(e.target.files || []).slice(0, CONFIG.imageMax);
+      var meta = $('.pv-meta', state.root);
+      e.target.value = '';
+      if (!files.length) return;
+      if (files.find(function (f) { return !isImageFile(f); })) return alertError(TEXT.imageOnly);
+      if (meta) meta.textContent = TEXT.compressing;
+      compressImageFiles(files).then(function (nextFiles) {
+        setPendingImages(nextFiles);
+      }).catch(function (err) {
+        setPendingImages([]);
+        alertError((err && err.message) || TEXT.imageCompressFail);
+      }).finally(function () {
+        if (meta) meta.textContent = '';
+      });
+    });
     $('.pv-compose-submit', state.root).addEventListener('click', sendTopic);
     $('.pv-compose-translate', state.root).addEventListener('click', translateComposeInput);
     $('.pv-comments-close', state.root).addEventListener('click', closeComments);
