@@ -1414,3 +1414,127 @@ body.pv-video-mode [component="sidebar"] {
     max-height: min(86dvh, 650px) !important;
   }
 }
+
+/* Peipe video v8 final fixes: easier swipe, real single-tap pause, rounded inputs, adaptive comments */
+#peipe-video-app .pv-tap-zone {
+  right: 72px !important;
+  bottom: max(118px, calc(var(--pv-bottom-safe) + 112px)) !important;
+  z-index: 30 !important;
+  touch-action: none !important;
+}
+#peipe-video-app .pv-toolbar { z-index: 35 !important; }
+#peipe-video-app .pv-desc { z-index: 34 !important; }
+#peipe-video-app .pv-cover { z-index: 4 !important; }
+#peipe-video-app .pv-slide-item.is-playing .pv-cover,
+#peipe-video-app .pv-cover.is-hidden { opacity: 0 !important; pointer-events: none !important; }
+#peipe-video-app .pv-cover:not(.is-hidden) { opacity: 1 !important; }
+
+#peipe-video-app .pv-like:not(.is-active) .pv-heart-svg path {
+  fill: rgba(0,0,0,.08) !important;
+  stroke: rgba(255,255,255,.98) !important;
+  stroke-width: 3.2px !important;
+}
+#peipe-video-app .pv-like.is-active .pv-heart-svg path {
+  fill: #ff2d55 !important;
+  stroke: #ff2d55 !important;
+  stroke-width: 0 !important;
+}
+
+#peipe-video-app .pv-comments-panel {
+  height: auto !important;
+  min-height: 220px !important;
+  max-height: min(88dvh, 760px) !important;
+  border-radius: 24px 24px 0 0 !important;
+}
+#peipe-video-app .pv-comments-list {
+  flex: 1 1 auto !important;
+  min-height: 80px !important;
+  overflow-y: auto !important;
+  overscroll-behavior: contain !important;
+}
+#peipe-video-app .pv-comment-send-row {
+  padding: 8px 8px max(8px, var(--pv-bottom-safe)) !important;
+  background: transparent !important;
+  border-top: 0 !important;
+  box-shadow: none !important;
+}
+#peipe-video-app .pv-comment-input-wrap,
+#peipe-video-app .pv-comment-send-row {
+  border-radius: 24px !important;
+}
+#peipe-video-app .pv-comment-input-wrap {
+  background: rgba(17,24,39,.075) !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  min-height: 46px !important;
+  padding: 0 7px !important;
+}
+#peipe-video-app .pv-comment-input,
+#peipe-video-app .pv-comment-input-wrap .pv-comment-input {
+  height: 44px !important;
+  border-radius: 22px !important;
+  background: transparent !important;
+  border: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+  padding: 0 10px !important;
+}
+#peipe-video-app .pv-comment-input-wrap .pv-comment-input-translate,
+#peipe-video-app .pv-comment-input-wrap .pv-comment-action-btn {
+  width: 36px !important;
+  height: 36px !important;
+  min-width: 36px !important;
+  border-radius: 999px !important;
+}
+
+#peipe-video-app .pv-compose-panel {
+  background: rgba(18,18,22,.62) !important;
+  backdrop-filter: blur(22px) saturate(1.25) !important;
+  -webkit-backdrop-filter: blur(22px) saturate(1.25) !important;
+  border: 1px solid rgba(255,255,255,.14) !important;
+  border-bottom: 0 !important;
+}
+#peipe-video-app .pv-compose-panel textarea {
+  border-radius: 22px !important;
+  background: rgba(255,255,255,.12) !important;
+}
+#peipe-video-app .pv-compose-translate,
+#peipe-video-app .pv-image-btn,
+#peipe-video-app .pv-compose-submit {
+  border-radius: 999px !important;
+}
+
+#peipe-video-app .pv-translate-panel {
+  background: rgba(255,255,255,.94) !important;
+  color: #111827 !important;
+  backdrop-filter: blur(22px) saturate(1.18) !important;
+  -webkit-backdrop-filter: blur(22px) saturate(1.18) !important;
+}
+#peipe-video-app .pv-translate-panel .pv-panel-title,
+#peipe-video-app .pv-translate-panel label,
+#peipe-video-app .pv-lang-row label,
+#peipe-video-app .pv-lang-row label span,
+#peipe-video-app .pv-lang-arrow { color: #111827 !important; }
+#peipe-video-app .pv-translate-panel input,
+#peipe-video-app .pv-translate-panel select,
+#peipe-video-app .pv-translate-panel textarea,
+#peipe-video-app .pv-lang-row select {
+  background: rgba(17,24,39,.07) !important;
+  color: #111827 !important;
+  border-radius: 16px !important;
+}
+#peipe-video-app .pv-provider-tab {
+  background: rgba(17,24,39,.08) !important;
+  color: #111827 !important;
+}
+#peipe-video-app .pv-provider-tab.is-active {
+  background: #ff2442 !important;
+  color: #fff !important;
+}
+
+@media (max-width: 380px) {
+  #peipe-video-app .pv-tap-zone {
+    right: 68px !important;
+    bottom: max(110px, calc(var(--pv-bottom-safe) + 104px)) !important;
+  }
+}
